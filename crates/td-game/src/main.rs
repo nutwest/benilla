@@ -15,6 +15,7 @@ mod economy;
 mod enemy;
 mod flow;
 mod grid;
+mod hud;
 mod level;
 mod path;
 mod shot;

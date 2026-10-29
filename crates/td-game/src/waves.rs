@@ -22,10 +22,10 @@ const MID_WAVE_CROWD: usize = 6;
 pub struct Lives(pub u32);
 
 #[derive(Resource, Default)]
-struct WaveRunner {
-    started: bool,
+pub(crate) struct WaveRunner {
+    pub(crate) started: bool,
     /// The wave spawning now; `waves.len()` once all have spawned.
-    index: usize,
+    pub(crate) index: usize,
     spawned: u32,
     /// Seconds to the next spawn.
     timer: f32,

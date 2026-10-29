@@ -186,6 +186,7 @@ fn run_script(
 fn aim_and_build(
     mut mode: ResMut<BuildMode>,
     mouse: Res<ButtonInput<MouseButton>>,
+    over_hud: Res<crate::hud::PointerOverHud>,
     window: Query<&Window, With<PrimaryWindow>>,
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     collision: WorldCollision,
@@ -255,7 +256,7 @@ fn aim_and_build(
         }
     }
 
-    if mode.pinned.is_none() && mouse.just_pressed(MouseButton::Left) {
+    if mode.pinned.is_none() && mouse.just_pressed(MouseButton::Left) && !over_hud.0 {
         match builder.place(p) {
             Ok(_) => {}
             Err(why) => warn!("build: refused {} at ({:.1}, {:.1}) — {why}", d.name, at.x, at.y),

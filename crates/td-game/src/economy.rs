@@ -71,6 +71,10 @@ pub struct EconomyDef {
 pub struct Stores(Amount);
 
 impl Stores {
+    pub fn amount(&self) -> Amount {
+        self.0
+    }
+
     pub fn can_afford(&self, cost: &Amount) -> bool {
         self.0.covers(cost)
     }

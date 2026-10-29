@@ -103,7 +103,8 @@ pub fn run(build: BuildId) -> AppExit {
         crate::build::plugin,
         crate::units::plugin,
         crate::combat::plugin,
-    ));
+    ))
+    .add_plugins(crate::hud::plugin);
 
     // After `AssetPlugin`: the loaders go into the live `AssetServer`, as in the viewer.
     benilla_assets::register_asset_loaders(&mut app);

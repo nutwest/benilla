@@ -9,7 +9,8 @@
 //! (`TD_UNIT_DEBUG=1` opens with it on).
 //!
 //! `TD_UNITS` scripts recruiting for a shot: `;`-separated `<id> <x> <y> [hold|guard]
-//! [first|nearest|strongest|weakest] [radius]`, WoW coordinates, run once everything is ready.
+//! [first|nearest|strongest|weakest] [radius]` or `select <n>` (the n-th placed, from 0), WoW
+//! coordinates, run once everything is ready.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -146,9 +147,12 @@ pub struct UnitMode {
     pub def: Option<usize>,
 }
 
-/// The selected unit.
+/// The selected unit, and whether the next ground click sets its guard post.
 #[derive(Resource, Default)]
-pub struct Selection(pub Option<Entity>);
+pub struct Selection {
+    pub unit: Option<Entity>,
+    pub pick_anchor: bool,
+}
 
 #[derive(Resource)]
 struct RadiusOverlay(bool);
@@ -280,6 +284,7 @@ fn run_script(
     heights: TerrainHeights,
     mut stores: ResMut<Stores>,
     mut spawner: CreatureSpawner,
+    mut selection: ResMut<Selection>,
     units: Query<(Entity, &Transform, &mut Unit)>,
 ) {
     if script.done || script.commands.is_empty() || !flow.ready() {
@@ -295,6 +300,14 @@ fn run_script(
     for line in script.commands.clone() {
         let words: Vec<String> = line.split_whitespace().map(String::from).collect();
         let num = |i: usize| words.get(i).and_then(|w| w.parse::<f32>().ok());
+        // `select <n>`: the n-th unit this script placed, from 0.
+        if words.first().map(String::as_str) == Some("select") {
+            match num(1).and_then(|n| placed.get(n as usize)) {
+                Some((e, _)) => selection.unit = Some(*e),
+                None => warn!("unit script: `{line}` names no unit placed so far"),
+            }
+            continue;
+        }
         let def = words
             .first()
             .and_then(|id| defs.defs.iter().position(|d| &d.id == id));
@@ -374,14 +387,25 @@ fn click(
     mut stores: ResMut<Stores>,
     mut spawner: CreatureSpawner,
     mut selection: ResMut<Selection>,
-    units: Query<(Entity, &Transform, &mut Unit)>,
+    over_hud: Res<crate::hud::PointerOverHud>,
+    mut units: Query<(Entity, &Transform, &mut Unit)>,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) || build.def.is_some() {
+    if !mouse.just_pressed(MouseButton::Left) || build.def.is_some() || over_hud.0 {
         return;
     }
     let Some(at) = cursor_ground(&window, &camera, &collision) else {
         return;
     };
+    // The panel's "Set post": this click places the selected unit's guard anchor.
+    if selection.pick_anchor {
+        selection.pick_anchor = false;
+        if let Some(Ok((_, _, mut u))) = selection.unit.map(|e| units.get_mut(e)) {
+            u.anchor = at;
+            u.target = None;
+            info!("unit: {} guards ({:.1}, {:.1})", defs.defs[u.def].name, at.x, at.y);
+        }
+        return;
+    }
     if let Some(def) = mode.def {
         let others = unit_positions(&units);
         if let Err(why) = recruit(
@@ -403,7 +427,7 @@ fn click(
         .map(|(e, xf, u)| (e, wow_xy(xf.translation).distance(at), u))
         .filter(|(_, d, _)| *d <= PICK_RADIUS)
         .min_by(|a, b| a.1.total_cmp(&b.1));
-    selection.0 = nearest.map(|(e, _, _)| e);
+    selection.unit = nearest.map(|(e, _, _)| e);
     if let Some((_, _, u)) = nearest {
         let d = &defs.defs[u.def];
         info!(
@@ -424,9 +448,9 @@ fn selected_keys(
     mut selection: ResMut<Selection>,
     mut units: Query<(Entity, &Transform, &mut Unit)>,
 ) {
-    let Some(entity) = selection.0 else { return };
+    let Some(entity) = selection.unit else { return };
     let Ok((_, _, mut u)) = units.get_mut(entity) else {
-        selection.0 = None;
+        selection.unit = None;
         return;
     };
     let name = defs.defs[u.def].name.clone();
@@ -463,7 +487,7 @@ fn selected_keys(
     }
     if keys.just_pressed(KeyCode::Delete) {
         commands.entity(entity).despawn();
-        selection.0 = None;
+        selection.unit = None;
         info!("unit: {name} dismissed");
     }
 }
@@ -498,7 +522,7 @@ fn draw_radii(
     mut gizmos: Gizmos,
 ) {
     for (e, xf, u) in &units {
-        let selected = selection.0 == Some(e);
+        let selected = selection.unit == Some(e);
         if !overlay.0 && !selected {
             continue;
         }

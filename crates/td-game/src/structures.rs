@@ -141,7 +141,7 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, log_bounds);
 }
 
-fn load_defs(mut commands: Commands, asset_server: Res<AssetServer>) {
+pub(crate) fn load_defs(mut commands: Commands, asset_server: Res<AssetServer>) {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/structures.ron");
     let file: DefsFile = match std::fs::read_to_string(path)
         .map_err(|e| e.to_string())
