@@ -6,13 +6,7 @@ use bevy::prelude::*;
 
 use benilla_world::build_id::BuildId;
 use benilla_world::terrain_stream::ViewFocus;
-
-/// The arena's map: Eastern Kingdoms (`Map.dbc` id 0).
-pub const MAP_ID: u32 = 0;
-
-/// The arena's centre in WoW world coords: the road through Goldshire, north of the Lion's Pride
-/// Inn. `z` is a guess the camera replaces with the terrain height once the tile is resident.
-pub const ARENA_CENTER: [f32; 3] = [-9435.0, 52.0, 57.0];
+use benilla_world::world_map::CurrentMap;
 
 /// Builds and runs the game; `build` is the launcher's compile-time stamp.
 pub fn run(build: BuildId) -> AppExit {
@@ -62,17 +56,36 @@ pub fn run(build: BuildId) -> AppExit {
     .add_plugins(benilla_world::bgwin::BgWinPlugin)
     .add_plugins(benilla_world::mac_quit::MacQuitPlugin);
 
+    // After `LogPlugin`, so the level's summary reaches the log.
+    let level = match crate::level::load() {
+        Ok(level) => level,
+        Err(e) => {
+            error!("level: {e}");
+            return AppExit::error();
+        }
+    };
+
     app.add_plugins(benilla_world::world_plugins::WorldPlugins);
     // What the engine needs told: the world is live, and it streams around the arena rather than
     // wherever the camera is, so panning never re-arms a load.
     app.insert_resource(benilla_world::schedule::WorldLive(true))
-        .insert_resource(ViewFocus::entry(MAP_ID, ARENA_CENTER));
+        .insert_resource(ViewFocus::entry(level.map_id, level.center));
+    // The engine seeds `CurrentMap` from `$WOW_MAP` at startup; the level's map wins, before the
+    // first frame reads it, so the seed announces no map change.
+    let map_id = level.map_id;
+    app.add_systems(PostStartup, move |mut commands: Commands| {
+        commands.insert_resource(CurrentMap(map_id));
+    });
+    app.insert_resource(level);
 
     app.add_plugins((
         crate::camera::plugin,
         crate::shot::plugin,
         crate::creature::plugin,
         crate::anim::plugin,
+        crate::enemy::plugin,
+        crate::waves::plugin,
+        crate::debug_draw::plugin,
     ));
 
     // After `AssetPlugin`: the loaders go into the live `AssetServer`, as in the viewer.

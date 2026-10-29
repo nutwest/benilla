@@ -1,0 +1,24 @@
+// Goldshire, Elwynn Forest. All positions are WoW world coordinates (x north, y west).
+// The path comes in down the north-east road, through the fork by the Lion's Pride Inn, south
+// past the blacksmith and out along the west road.
+(
+    name: "Goldshire crossroads",
+    map_id: 0,
+    arena_center: (-9435.0, 52.0, 57.0),
+    lives: 20,
+    path: [
+        (-9387.2, 4.2),
+        (-9432.6, 52.0),
+        (-9470.9, 59.2),
+        (-9490.0, 85.5),
+        (-9484.0, 135.7),
+    ],
+    waves: [
+        // Kobolds at a walk.
+        (display_id: 26, count: 8, interval: 2.5, speed: 2.5, health: 60.0, delay: 0.0),
+        // Wolves at a run, catching up with the tail of the kobolds.
+        (display_id: 165, count: 6, interval: 1.5, speed: 7.0, health: 45.0, delay: 4.0),
+        // Kobolds again, at a run.
+        (display_id: 26, count: 10, interval: 1.2, speed: 4.5, health: 80.0, delay: 8.0),
+    ],
+)

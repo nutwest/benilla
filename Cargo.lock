@@ -6371,6 +6371,8 @@ dependencies = [
  "benilla-formats",
  "benilla-world",
  "bevy",
+ "ron",
+ "serde",
 ]
 
 [[package]]

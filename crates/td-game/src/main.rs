@@ -1,12 +1,16 @@
 //! `td-game`: a single-player tower defense over a streamed Azeroth. M0 is the engine boot, the
 //! RTS camera over the arena and the `WOW_WORLDVIEW_SHOT` screenshot; M1 one creature that stands,
-//! walks and stops.
+//! walks and stops; M2 a data-driven level whose waves walk the Goldshire road.
 
 mod anim;
 mod boot;
 mod camera;
 mod creature;
+mod debug_draw;
+mod enemy;
+mod level;
 mod shot;
+mod waves;
 
 use benilla_world::build_id::BuildId;
 

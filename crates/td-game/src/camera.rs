@@ -12,7 +12,7 @@ use bevy::window::{CursorGrabMode, PrimaryWindow};
 use benilla_assets::coords::wow_to_bevy;
 use benilla_world::world_point::TerrainHeights;
 
-use crate::boot::ARENA_CENTER;
+use crate::level::Level;
 
 /// The boom's angle below the horizon, in radians (55°).
 const PITCH: f32 = 0.96;
@@ -35,15 +35,39 @@ const DRAG_TURN: f32 = 0.004;
 /// How fast the focus height eases to the ground, per second.
 const GROUND_EASE: f32 = 8.0;
 
-/// The camera's pose: the ground point it looks at, its heading and its boom length.
+/// The camera's pose: the ground point it looks at, its heading, pitch and boom length.
 #[derive(Component)]
 pub struct RtsCam {
     /// Bevy space; `y` follows the terrain.
     pub focus: Vec3,
     pub yaw: f32,
+    pub pitch: f32,
     pub distance: f32,
     /// The focus has taken a real terrain height, so later heights ease rather than snap.
     grounded: bool,
+}
+
+/// `TD_CAM=<x>,<y>[,<distance>[,<pitch°>[,<yaw°>]]]`: the opening pose for a shot, the focus in
+/// WoW coords. Pitch and distance outside the player's range are allowed (a top-down survey).
+fn pose_from_env(cam: &mut RtsCam) {
+    let Ok(v) = std::env::var("TD_CAM") else {
+        return;
+    };
+    let c: Vec<f32> = v.split(',').filter_map(|p| p.trim().parse().ok()).collect();
+    if c.len() < 2 {
+        warn!("camera: TD_CAM wants `x,y[,distance[,pitch[,yaw]]]` — ignored");
+        return;
+    }
+    cam.focus = wow_to_bevy([c[0], c[1], cam.focus.y]);
+    if let Some(&d) = c.get(2) {
+        cam.distance = d;
+    }
+    if let Some(&p) = c.get(3) {
+        cam.pitch = p.to_radians();
+    }
+    if let Some(&y) = c.get(4) {
+        cam.yaw = y.to_radians();
+    }
 }
 
 pub fn plugin(app: &mut App) {
@@ -58,13 +82,19 @@ pub fn plugin(app: &mut App) {
 }
 
 /// The world camera bundle `benilla_world::worldview` spawns, under the RTS controller.
-fn spawn_camera(mut commands: Commands, msaa: Res<benilla_world::view::MsaaSetting>) {
-    let cam = RtsCam {
-        focus: wow_to_bevy(ARENA_CENTER),
+fn spawn_camera(
+    mut commands: Commands,
+    msaa: Res<benilla_world::view::MsaaSetting>,
+    level: Res<Level>,
+) {
+    let mut cam = RtsCam {
+        focus: level.center_bevy(),
         yaw: 0.0,
+        pitch: PITCH,
         distance: DISTANCE_START,
         grounded: false,
     };
+    pose_from_env(&mut cam);
     commands.spawn((
         Camera3d::default(),
         benilla_world::view::WorldCamera,
@@ -85,7 +115,7 @@ fn spawn_camera(mut commands: Commands, msaa: Res<benilla_world::view::MsaaSetti
 
 /// The eye on the boom: behind the focus along the heading, raised by the pitch, looking at it.
 fn eye_transform(cam: &RtsCam) -> Transform {
-    let boom = Quat::from_rotation_y(cam.yaw) * Vec3::new(0.0, PITCH.sin(), PITCH.cos());
+    let boom = Quat::from_rotation_y(cam.yaw) * Vec3::new(0.0, cam.pitch.sin(), cam.pitch.cos());
     Transform::from_translation(cam.focus + boom * cam.distance).looking_at(cam.focus, Vec3::Y)
 }
 
@@ -97,6 +127,7 @@ fn control(
     mut wheel: MessageReader<MouseWheel>,
     mut window: Query<&mut bevy::window::CursorOptions, With<PrimaryWindow>>,
     heights: TerrainHeights,
+    level: Res<Level>,
     mut cams: Query<(&mut Transform, &mut RtsCam)>,
 ) {
     let Ok((mut xf, mut cam)) = cams.single_mut() else {
@@ -153,7 +184,7 @@ fn control(
     }
 
     // Keep the focus inside the arena, measured on the ground plane.
-    let center = wow_to_bevy(ARENA_CENTER);
+    let center = level.center_bevy();
     let offset = Vec2::new(cam.focus.x - center.x, cam.focus.z - center.z);
     if offset.length() > ARENA_RADIUS {
         let clamped = offset.normalize() * ARENA_RADIUS;

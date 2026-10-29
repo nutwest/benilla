@@ -13,12 +13,18 @@ use benilla_world::world_unit::WorldUnit;
 /// `AnimationData.dbc` ids.
 pub const STAND: u16 = 0;
 pub const WALK: u16 = 4;
+pub const RUN: u16 = 5;
+
+/// Above this ground speed (yd/s) a mover runs rather than walks: past the 2.5 yd/s walk and
+/// well under the 7 yd/s run, so neither gait plays far from its authored speed.
+const RUN_ABOVE: f32 = 4.0;
 
 /// What the body is doing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gait {
     Stand,
     Walk,
+    Run,
 }
 
 impl Gait {
@@ -26,6 +32,18 @@ impl Gait {
         match self {
             Gait::Stand => STAND,
             Gait::Walk => WALK,
+            Gait::Run => RUN,
+        }
+    }
+
+    /// The gait for a ground speed: still, walking or running.
+    pub fn for_speed(speed: f32) -> Self {
+        if speed <= 0.0 {
+            Gait::Stand
+        } else if speed <= RUN_ABOVE {
+            Gait::Walk
+        } else {
+            Gait::Run
         }
     }
 }
@@ -69,7 +87,12 @@ fn drive(
     )>,
 ) {
     for (mut anim, mut player, mut transitions, anims, unit) in &mut units {
-        let Some(clip) = anims.find(anim.wanted.anim_id()).or_else(|| anims.find(STAND)) else {
+        // A model without a run plays its walk, scaled up; one without either stands.
+        let clip = anims.find(anim.wanted.anim_id()).or_else(|| match anim.wanted {
+            Gait::Run => anims.find(WALK),
+            _ => None,
+        });
+        let Some(clip) = clip.or_else(|| anims.find(STAND)) else {
             continue;
         };
         if anim.playing != Some(anim.wanted) {
@@ -84,7 +107,7 @@ fn drive(
                 active.repeat();
             }
             anim.playing = Some(anim.wanted);
-            info!(
+            debug!(
                 "anim: {:?} (clip {}, {:.2}s, authored {:.2} yd/s, rate {:.2}x)",
                 anim.wanted,
                 clip.anim_id,
