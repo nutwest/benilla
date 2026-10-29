@@ -2,9 +2,11 @@
 //! RTS camera over the arena and the `WOW_WORLDVIEW_SHOT` screenshot; M1 one creature that stands,
 //! walks and stops; M2 a data-driven level whose waves walk the Goldshire road; M3 a pathing grid
 //! and flow field the enemies steer by; M4 structures the player builds to reroute them; M5
-//! units that fight them; M6.5 a commander the player can take direct control of.
+//! units that fight them; M6 enemies that fight back; M6.5 a commander the player can take
+//! direct control of.
 
 mod anim;
+mod balance;
 mod boot;
 mod build;
 mod camera;
@@ -14,6 +16,7 @@ mod creature;
 mod debug_draw;
 mod economy;
 mod enemy;
+mod fight_back;
 mod flow;
 mod grid;
 mod hud;

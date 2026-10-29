@@ -9,7 +9,8 @@
 //! (`TD_UNIT_DEBUG=1` opens with it on).
 //!
 //! `TD_UNITS` scripts recruiting for a shot: `;`-separated `<id> <x> <y> [hold|guard]
-//! [first|nearest|strongest|weakest] [radius]` or `select <n>` (the n-th placed, from 0), WoW
+//! [first|nearest|strongest|weakest] [radius]`, `select <n>` (the n-th placed, from 0), `escort <n>`
+//! (the commander escorts the n-th placed) or `select commander`; WoW
 //! coordinates, run once everything is ready.
 
 use bevy::prelude::*;
@@ -36,6 +37,9 @@ const MIN_SPACING: f32 = 1.0;
 /// A click selects the nearest unit within this many yards of the cursor's ground point.
 const PICK_RADIUS: f32 = 2.5;
 
+/// An escort pick takes the nearest structure whose centre is this close to the click.
+const STRUCTURE_PICK_RADIUS: f32 = 8.0;
+
 const UNIT_KEYS: [KeyCode; 3] = [KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9];
 
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,6 +48,8 @@ pub enum Behaviour {
     Hold,
     /// Engages what enters the guard radius around its anchor, then walks back.
     Guard,
+    /// Commander only: stays within its radius of a chosen unit or structure and defends it.
+    Escort,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -99,21 +105,25 @@ pub struct UnitDef {
     pub behaviour: Behaviour,
     pub priority: Priority,
     pub guard_radius: f32,
+    /// Enemies it holds in melee at once; 0 for a unit that holds none, which a single enemy may
+    /// still engage.
+    #[serde(default)]
+    pub blocks: u32,
+    /// Seconds knocked out before it stands up again at its post.
+    #[serde(default = "default_recovery")]
+    pub recovery_secs: f32,
+}
+
+fn default_recovery() -> f32 {
+    10.0
 }
 
 /// The commander: not recruited, one per battle.
 #[derive(Deserialize, Clone, Debug)]
 pub struct CommanderDef {
-    pub name: String,
-    pub display_id: u32,
-    pub health: f32,
-    pub damage: f32,
-    pub attack_range: f32,
-    /// Seconds between attacks.
-    pub attack_interval: f32,
-    pub move_speed: f32,
+    /// Its stats and default behaviour, as a unit's; `cost` is unused.
+    pub unit: UnitDef,
     pub respawn_secs: f32,
-    pub attack_anims: Vec<u16>,
 }
 
 #[derive(Deserialize)]
@@ -126,6 +136,18 @@ struct UnitsFile {
 pub struct UnitDefs {
     pub defs: Vec<UnitDef>,
     pub commander: CommanderDef,
+}
+
+impl UnitDefs {
+    /// A unit's def by its [`Unit::def`] index: the recruitable ones, then the commander's at
+    /// [`Self::commander_index`].
+    pub fn get(&self, i: usize) -> &UnitDef {
+        self.defs.get(i).unwrap_or(&self.commander.unit)
+    }
+
+    pub fn commander_index(&self) -> usize {
+        self.defs.len()
+    }
 }
 
 /// Reads `data/units.ron`; at boot, so the creature library can preload every unit's display.
@@ -159,6 +181,32 @@ pub struct Unit {
     pub path: Vec<Vec2>,
     pub path_goal: Option<Vec2>,
     pub repath_in: f32,
+    /// What an Escort keeps close to: a unit or a structure.
+    pub escort: Option<Entity>,
+    /// On a tower (M7): out of a melee enemy's reach.
+    pub garrisoned: bool,
+}
+
+impl Unit {
+    /// A fresh unit of def `index` at `at` (WoW `(x, y)`), its post, with the def's defaults.
+    pub fn new(index: usize, d: &UnitDef, at: Vec2) -> Self {
+        Self {
+            def: index,
+            health: d.health,
+            behaviour: d.behaviour,
+            priority: d.priority,
+            guard_radius: d.guard_radius,
+            anchor: at,
+            target: None,
+            cooldown: 0.0,
+            pending: None,
+            path: Vec::new(),
+            path_goal: None,
+            repath_in: 0.0,
+            escort: None,
+            garrisoned: false,
+        }
+    }
 }
 
 /// The unit def being recruited, if in recruit mode.
@@ -172,6 +220,8 @@ pub struct UnitMode {
 pub struct Selection {
     pub unit: Option<Entity>,
     pub pick_anchor: bool,
+    /// The next click picks the unit or structure the selected commander escorts.
+    pub pick_escort: bool,
 }
 
 #[derive(Resource)]
@@ -181,6 +231,10 @@ struct RadiusOverlay(bool);
 struct Script {
     commands: Vec<String>,
     done: bool,
+    /// `escort <n>`: the unit the commander should escort, once there is a commander.
+    escort: Option<Entity>,
+    /// `select commander`: select it once it exists.
+    select_commander: bool,
 }
 
 pub fn plugin(app: &mut App) {
@@ -201,12 +255,15 @@ pub fn plugin(app: &mut App) {
         .insert_resource(Script {
             commands,
             done: false,
+            escort: None,
+            select_commander: false,
         })
         .add_systems(
             Update,
             (
                 mode_keys.run_if(crate::camera::rts_input),
                 run_script,
+                commander_script,
                 click.run_if(crate::camera::rts_input),
                 selected_keys.run_if(crate::camera::rts_input),
                 draw_radii,
@@ -272,20 +329,7 @@ fn recruit(
         )
         .ok_or("its model is not ready")?;
     stores.spend(d.cost, &d.name);
-    spawner.commands().entity(entity).insert(Unit {
-        def,
-        health: d.health,
-        behaviour: d.behaviour,
-        priority: d.priority,
-        guard_radius: d.guard_radius,
-        anchor: at,
-        target: None,
-        cooldown: 0.0,
-        pending: None,
-        path: Vec::new(),
-        path_goal: None,
-        repath_in: 0.0,
-    });
+    spawner.commands().entity(entity).insert(Unit::new(def, d, at));
     info!(
         "recruit: {} at ({:.1}, {:.1}) — {:?}, {:?}",
         d.name, at.x, at.y, d.behaviour, d.priority
@@ -327,6 +371,20 @@ fn run_script(
     for line in script.commands.clone() {
         let words: Vec<String> = line.split_whitespace().map(String::from).collect();
         let num = |i: usize| words.get(i).and_then(|w| w.parse::<f32>().ok());
+        // `select commander`, and `escort <n>`: the commander escorts the n-th unit placed.
+        if words.first().map(String::as_str) == Some("select")
+            && words.get(1).map(String::as_str) == Some("commander")
+        {
+            script.select_commander = true;
+            continue;
+        }
+        if words.first().map(String::as_str) == Some("escort") {
+            match num(1).and_then(|n| placed.get(n as usize)) {
+                Some((e, _)) => script.escort = Some(*e),
+                None => warn!("unit script: `{line}` names no unit placed so far"),
+            }
+            continue;
+        }
         // `select <n>`: the n-th unit this script placed, from 0.
         if words.first().map(String::as_str) == Some("select") {
             match num(1).and_then(|n| placed.get(n as usize)) {
@@ -416,6 +474,7 @@ fn click(
     mut selection: ResMut<Selection>,
     over_hud: Res<crate::hud::PointerOverHud>,
     mut units: Query<(Entity, &Transform, &mut Unit)>,
+    structures: Query<(Entity, &Transform), With<crate::structures::Structure>>,
 ) {
     if !mouse.just_pressed(MouseButton::Left) || build.def.is_some() || over_hud.0 {
         return;
@@ -429,7 +488,34 @@ fn click(
         if let Some(Ok((_, _, mut u))) = selection.unit.map(|e| units.get_mut(e)) {
             u.anchor = at;
             u.target = None;
-            info!("unit: {} guards ({:.1}, {:.1})", defs.defs[u.def].name, at.x, at.y);
+            info!("unit: {} guards ({:.1}, {:.1})", defs.get(u.def).name, at.x, at.y);
+        }
+        return;
+    }
+    // The panel's "Escort": this click picks the unit or structure the commander keeps close to.
+    if selection.pick_escort {
+        selection.pick_escort = false;
+        let Some(me) = selection.unit else { return };
+        let unit = units
+            .iter()
+            .filter(|(e, _, _)| *e != me)
+            .map(|(e, xf, _)| (e, wow_xy(xf.translation).distance(at)))
+            .filter(|(_, d)| *d <= PICK_RADIUS)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let structure = structures
+            .iter()
+            .map(|(e, xf)| (e, wow_xy(xf.translation).distance(at)))
+            .filter(|(_, d)| *d <= STRUCTURE_PICK_RADIUS)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((charge, _)) = unit.or(structure) else {
+            warn!("unit: no unit or structure there to escort");
+            return;
+        };
+        if let Ok((_, _, mut u)) = units.get_mut(me) {
+            u.behaviour = Behaviour::Escort;
+            u.escort = Some(charge);
+            u.target = None;
+            info!("unit: {} escorts {charge:?}", defs.get(u.def).name);
         }
         return;
     }
@@ -456,7 +542,7 @@ fn click(
         .min_by(|a, b| a.1.total_cmp(&b.1));
     selection.unit = nearest.map(|(e, _, _)| e);
     if let Some((_, _, u)) = nearest {
-        let d = &defs.defs[u.def];
+        let d = defs.get(u.def);
         info!(
             "select: {} — {:?}, {:?}, guard radius {:.0}, health {:.0}/{:.0}",
             d.name, u.behaviour, u.priority, u.guard_radius, u.health, d.health
@@ -480,11 +566,11 @@ fn selected_keys(
         selection.unit = None;
         return;
     };
-    let name = defs.defs[u.def].name.clone();
+    let name = defs.get(u.def).name.clone();
     if keys.just_pressed(KeyCode::KeyB) {
         u.behaviour = match u.behaviour {
             Behaviour::Hold => Behaviour::Guard,
-            Behaviour::Guard => Behaviour::Hold,
+            Behaviour::Guard | Behaviour::Escort => Behaviour::Hold,
         };
         u.target = None;
         info!("unit: {name} → {:?}", u.behaviour);
@@ -513,6 +599,10 @@ fn selected_keys(
         }
     }
     if keys.just_pressed(KeyCode::Delete) {
+        if u.def == defs.commander_index() {
+            info!("unit: the commander cannot be dismissed");
+            return;
+        }
         commands.entity(entity).despawn();
         selection.unit = None;
         info!("unit: {name} dismissed");
@@ -554,7 +644,7 @@ fn draw_radii(
             continue;
         }
         let here = wow_xy(xf.translation);
-        let d = &defs.defs[u.def];
+        let d = defs.get(u.def);
         match u.behaviour {
             Behaviour::Guard => {
                 ground_circle(&mut gizmos, &heights, u.anchor, u.guard_radius, Color::srgb(0.3, 0.6, 1.0));
@@ -562,9 +652,32 @@ fn draw_radii(
             Behaviour::Hold => {
                 ground_circle(&mut gizmos, &heights, here, d.attack_range, Color::srgb(1.0, 0.6, 0.2));
             }
+            Behaviour::Escort => {
+                ground_circle(&mut gizmos, &heights, u.anchor, u.guard_radius, Color::srgb(0.75, 0.35, 1.0));
+            }
         }
         if selected {
             ground_circle(&mut gizmos, &heights, here, 0.9, Color::srgb(1.0, 1.0, 0.3));
         }
+    }
+}
+
+/// The unit script's commander lines, applied once the commander has spawned.
+fn commander_script(
+    mut script: ResMut<Script>,
+    commander: Res<crate::commander::CommanderState>,
+    mut selection: ResMut<Selection>,
+    mut units: Query<&mut Unit>,
+) {
+    let Some(me) = commander.entity else { return };
+    let Ok(mut u) = units.get_mut(me) else { return };
+    if let Some(charge) = script.escort.take() {
+        u.behaviour = Behaviour::Escort;
+        u.escort = Some(charge);
+        u.target = None;
+        info!("unit script: the commander escorts {charge:?}");
+    }
+    if std::mem::take(&mut script.select_commander) {
+        selection.unit = Some(me);
     }
 }

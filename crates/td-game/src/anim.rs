@@ -104,6 +104,14 @@ impl CreatureAnim {
     pub fn is_dead(&self) -> bool {
         self.dead
     }
+
+    /// Back from Death: the gait plays again from a blend out of the held pose.
+    pub fn revive(&mut self) {
+        self.dead = false;
+        self.attack = None;
+        self.playing = Some(Playing::Gait(Gait::Walk));
+        self.wanted = Gait::Stand;
+    }
 }
 
 pub fn plugin(app: &mut App) {

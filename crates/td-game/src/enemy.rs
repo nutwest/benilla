@@ -10,7 +10,7 @@ use benilla_world::world_point::TerrainHeights;
 use crate::anim::{CreatureAnim, Gait};
 use crate::flow::Flow;
 use crate::grid::Grid;
-use crate::level::Level;
+use crate::level::{EnemyFight, Level};
 use crate::waves::Lives;
 
 /// How quickly the facing closes on the travel direction, per second (exponential).
@@ -29,6 +29,12 @@ pub struct Enemy {
     pub health: f32,
     /// Gold granted when it dies.
     pub bounty: f32,
+    pub fight: EnemyFight,
+    /// The unit it has left the road to fight, if any ([`crate::fight_back`]).
+    pub engaged: Option<Entity>,
+    /// Seconds until its next swing may start, and a swing in flight: its unit and when it lands.
+    pub cooldown: f32,
+    pub pending: Option<(Entity, f32)>,
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -49,6 +55,7 @@ fn steer(
     flow: Res<Flow>,
     heights: TerrainHeights,
     mut lives: ResMut<Lives>,
+    mut stats: ResMut<crate::balance::BattleStats>,
     mut enemies: Query<(Entity, &Enemy, &mut Transform, &mut CreatureAnim)>,
 ) {
     if !flow.ready() {
@@ -69,6 +76,7 @@ fn steer(
             // Past defeat the stragglers still leave the road, but cost and report nothing.
             if lives.0 > 0 {
                 lives.0 -= 1;
+                stats.leaks += 1;
                 info!(
                     "leak: a wave {} enemy reached the exit with {} hp — lives {}",
                     enemy.wave + 1,
@@ -79,6 +87,10 @@ fn steer(
                     info!("defeat: no lives left");
                 }
             }
+            continue;
+        }
+        // Fighting a unit: `fight_back` moves it.
+        if enemy.engaged.is_some() {
             continue;
         }
 

@@ -90,19 +90,53 @@ Ungarrisoning puts the unit on the nearest free passable cell beside the tower.
 
 ### 1.4 Enemies fight back
 
-Enemies get combat stats in the wave data (`damage`, `attack_interval`, `attack_range`,
-`aggro_radius`). An enemy that has a unit inside its aggro radius, and can reach it (not a
-garrisoned unit for a melee enemy), leaves the flow field to attack it, then returns to the flow
-field when the unit is down or out of reach.
+Enemies get combat stats in the wave data (`fight: (damage, attack_interval, attack_range,
+aggro_radius, attack_anims)`). An enemy that has a unit inside its aggro radius, and can reach it
+(not a garrisoned unit for a melee enemy), leaves the flow field to attack it, then returns to the
+flow field when the unit is down or more than twice its aggro radius away.
+
+**Blocking.** A melee unit holds up to `blocks` enemies at once (`units.ron`: footman 2, commander
+3): once its slots are full, further enemies walk past it. A unit that holds none (an archer) can
+still be engaged, by one enemy at a time. That is what makes melee units worth their gold and what
+makes an exposed archer a liability.
 
 A unit at 0 health is **knocked out**, not killed: it plays Death, lies still, cannot act or be
-targeted, and after `recovery_secs` stands up (Stand from the Death pose's end) at its post with
-half health. Losing units is a tempo loss, not a gold loss, which keeps the economy legible.
+targeted, and after `recovery_secs` stands up at its post with half health. Losing units is a tempo
+loss, not a gold loss, which keeps the economy legible. The commander is the exception: it falls,
+and respawns by the exit (§1.5).
+
+### 1.5 The commander
+
+One per battle, placed by the exit at the start. In **commander mode** (V) the player steers it
+directly with WoW-style controls (M6.5). **Left to itself** it is a unit like any other, selectable
+in RTS mode, with a behaviour:
+
+- **Hold** and **Guard**, as for units (§1.1).
+- **Escort** (commander only): it stays within its radius of a chosen unit or structure and defends
+  it, its post moving with its charge. If the charge is gone (dead, sold), it guards where the
+  charge was.
+
+Leaving commander mode drops its post where it stands. It counts as a melee unit for blocking
+(blocks 3) and enemies fight it in either mode; enemy damage is tuned so a commander-mode fight is a
+real risk. At 0 health it plays Death, the view is forced back to RTS, and it respawns by the exit
+after `respawn_secs`, keeping its behaviour settings. In a debug build F9 kills it, for testing.
+
+### 1.6 The balance test
+
+`TD_BALANCE=<name>` turns a scripted battle into a test: it runs (at `TD_TIME_SCALE` speed) until
+the waves are done, the lives run out or a time limit passes, then prints one line, `BALANCE
+<name>: … killed k/n, leaked l (lives), knockouts, commander deaths, gold`, and exits. The standing
+runs:
+
+- **units**: the five-unit defense on the north-east road, all waves;
+- **commander_solo**: the commander alone, player-controlled by script (`TD_COMMANDER=enter@3,auto`),
+  against one wave (`TD_WAVE_LIMIT=1`): it should help, not solo the wave;
+- **units_and_commander**: the units with the commander guarding the exit.
 
 Enemies never attack structures in the first version; a route to the exit always exists, so they
 have no reason to. Sappers that do can be a later enemy type.
 
-### 1.5 Economy
+### 1.7 Economy
 
 Two pairs of currencies, kept apart so units and structures do not compete for one pool: units
 cost Gold and Food, structures Lumber and Stone.
@@ -117,7 +151,7 @@ cost Gold and Food, structures Lumber and Stone.
 All numbers live in the level and def files so balancing never needs a rebuild. Calling the next
 wave early pays a Gold bonus scaled by the time saved.
 
-### 1.6 Level data
+### 1.8 Level data
 
 `levels/*.ron` grows from M2's file:
 
@@ -348,7 +382,7 @@ Units use single-skin creature stand-ins until M9.
 | **M3** | **Grid and flow field.** Grid bounds, spawns, exit and roads in the level file; static bake (holes, slope, liquid, world geometry); road costs; Dijkstra integration and direction fields; enemies steer by the field instead of the polyline; F1/F2 overlays. | Top-down shot of the grid overlay over Goldshire with buildings and trees blocked and the road cheapest; mid-wave shot of enemies on the road following the field. |
 | **M4** | **Structures.** `structures.ron`; static M2 spawn with collider; cursor placement with ghost, rotation and validity overlay; rasterize into the structure layer; recompute; refuse a blocking placement; sell with refund; Lumber and Stone with start amounts, wave grants and a Lumber trickle. | Shot of a wall forcing enemies off the road and back on; a refused placement logged with its reason; the grid overlay showing the structure cells. |
 | **M5** | **Units and combat.** `units.ron` with stand-ins (picked with `TD_FIND_DISPLAY`); recruit and place; health and damage on both sides; enemy death (Death clip, then despawn); archers with hold position and First/Nearest/Strongest; soldiers with guard, engage, leash and return; A* for unit moves; Gold with bounties; projectiles as gizmo lines, then an arrow M2. Attack and combat-ready clips added to `anim.rs`. | Mid-wave shot of archers firing and a soldier engaging inside its radius; log lines for each priority choosing different targets in one scripted test. |
-| **M6** | **Enemies fight back.** Enemy combat stats and aggro; melee blocking; units knocked out and recovering at their post; garrison rules prepared (melee cannot target a flagged unit). | Shot of a knocked-out unit lying down while enemies pass; log of its recovery. |
+| **M6** | **Enemies fight back.** Enemy combat stats and aggro; melee blocking by slot count (footman 2, commander 3; others engaged one at a time); units knocked out and recovering at their post; garrison rules prepared (melee cannot target a flagged unit). The commander as a unit when not steered: Hold, Guard or Escort, selectable like units; it blocks and can be killed. The balance test (§1.6). | Shot of a knocked-out unit lying down while enemies pass; log of its recovery; the three balance runs' verdicts. |
 | **M6.5** | **Commander mode.** One commander per battle (stand-in creature; stats in `units.ron`), placed by the exit. V toggles RTS and commander mode with a 0.7 s eased camera blend (position, rotation, FOV; input locked). WoW-style controls and a follow camera that rides the terrain and pulls in on world collision; Tab targeting and auto-attack; building and recruiting off in commander mode; death forces RTS and respawns at the exit after a timer; the HUD shows the current mode's controls. | Shots of the RTS view, mid-transition, and commander mode fighting a kobold. |
 | **M7** | **Towers and garrison.** Tower slots and anchor heights; order a unit up and down; range bonus; melee immunity. | Shot of an archer on a guard tower outranging ground archers. |
 | **M8** | **Game loop and HUD.** Bevy UI (not FrameXML): Gold, Lumber, lives, wave, build bar, unit panel with behaviour controls, call-wave-early, victory and defeat; a second wave set tuned for the new mechanics. | Shots of the HUD mid-wave and of the end screens. |
@@ -528,7 +562,92 @@ ADT's road texture layers); humanoid units for every playable race (M9, route A,
 eight races' baked NPCs); Kalimdor locations verified to stream and bake like Goldshire; and a
 strategic-map UI. None of it has a milestone number yet.
 
-## 9. Open questions
+## 9. Abilities (designed, not built)
+
+Units and the commander get abilities: a heal, a charge, a volley, a rallying shout. They are
+defined in data per class, used by the player (the commander in commander mode, a selected unit
+from its panel) and by the unit AI when nobody is steering, which is why every ability carries
+hints for when to use it.
+
+### 9.1 Defining an ability
+
+`data/abilities.ron`, one entry per ability, referenced by id from each class in `units.ron`
+(`abilities: ["heal", "volley"]`):
+
+```text
+(
+    id: "heal",
+    name: "Healing Touch",
+    cost: 25.0,                      // from the caster's own energy pool, never the battle's stores
+    cooldown: 12.0,                  // seconds
+    cast_time: 1.5,                  // 0 = instant; a cast is interrupted by a hit if `fragile`
+    range: 30.0,                     // yards; 0 = self
+    target: Ally,                    // Self, Ally, Enemy, Ground (a point), None
+    effect: Heal(amount: 120.0),     // see 9.2
+    // Presentation, straight from the client's data:
+    spell_id: 5185,                  // Spell.dbc row: name, icon and visual come from it
+    icon: None,                      // override: an Interface\Icons path
+    visual: None,                    // override: a SpellVisual.dbc id
+    cast_anim: 54,                   // AnimationData id while casting (54 SpellCastOmni, 53 directed)
+    ai: [ (when: AllyBelow(0.4), prefer: LowestHealthAlly) ],
+    manual_only: false,
+)
+```
+
+- **Presentation from the client data.** `spell_id` names a `Spell.dbc` row; its `SpellIconID`
+  (`SpellIcon.dbc` → an `Interface\Icons\…` texture) is the button icon, and its `SpellVisual`
+  chain (precast, cast, missile and impact kits, each with M2 effects and an animation) is what the
+  cast looks like. `benilla-formats` already reads these chains for the client
+  (`benilla-extract spellvis` dumps one), and the icon path is a texture load like any other. The
+  overrides exist for an ability with no fitting spell.
+- **Range, cast time and cooldown** may be taken from the same row (`SpellRange.dbc`,
+  `SpellCastTimes.dbc`, the row's cooldown) as defaults, but the ability's own numbers win: this is
+  a tower-defense balance, not the 1.12 one.
+
+### 9.2 Effects
+
+A small closed set, composable in a list: `Damage(amount, school)`, `Heal(amount)`,
+`Area(radius, effects)`, `Missile(speed, effects)` (fires a projectile that applies its effects on
+impact), `Buff(stat, amount, secs)` (attack speed, move speed, damage taken), `Stun(secs)`,
+`Knockback(yards)`, `Taunt(secs)` (enemies within reach engage the caster, ignoring block slots),
+`Summon(unit_id, secs)`, `Dash(yards)`. Each effect is one system over an `AbilityCast` message,
+so adding a kind means adding one match arm and one system.
+
+### 9.3 AI usage hints
+
+`ai` is a list of `(when, prefer)` rules; the unit AI evaluates them in order whenever the ability
+is ready and the unit is not being steered, and casts on the first rule that holds:
+
+| `when` | Holds when |
+|---|---|
+| `AllyBelow(fraction)` | An ally in range is below that share of its health |
+| `SelfBelow(fraction)` | The caster is |
+| `EnemiesWithin(n, yards)` | At least `n` enemies are within `yards` of the target point (the caster, or the best cluster in range) |
+| `EnemyEngaging` | An enemy is engaged with the caster or an ally in range |
+| `EnemyNear(yards)` | Any enemy is within that distance of the exit-side end of the caster's zone |
+| `Always` | Whenever it is ready (a passive aura refreshed on cooldown) |
+
+`prefer` picks among valid targets: `LowestHealthAlly`, `Strongest`, `Nearest`, `First` (the
+targeting priorities of §1.1), `DensestCluster`. Examples: a heal `AllyBelow(0.4)` +
+`LowestHealthAlly`; a volley `EnemiesWithin(3, 8)` + `DensestCluster`; a shout `EnemyEngaging` at
+self.
+
+### 9.4 Manual-only abilities
+
+`manual_only: true` keeps an ability off the AI: the player's call in commander mode or from a
+selected unit's panel. These are the ones whose value depends on timing or position the AI cannot
+judge, or that spend something scarce:
+
+- movement (`Dash`, a charge, a leap): the AI would throw the commander out of position;
+- `Taunt`: pulling enemies off a blocker is a tactical decision;
+- `Summon` and anything with a long cooldown (over ~60 s) or a cost in battle resources;
+- any ability marked as an "ultimate" for the commander.
+
+The commander's abilities are usable by the player in commander mode (number keys, an action bar
+in the HUD) and by its AI otherwise, under the same hints; a recruited unit's are AI-driven unless
+the player clicks them on its panel.
+
+## 10. Open questions
 
 - **Starting balances and Food's role.** Whether Food is a per-unit cost or an upkeep cap.
 - **Moving placed units.** Free, with a cooldown, or a Gold cost?

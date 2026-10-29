@@ -34,10 +34,19 @@
     ),
     waves: [
         // Kobolds at a walk.
-        (display_id: 26, count: 8, interval: 2.5, speed: 2.5, health: 60.0, delay: 0.0, bounty: 5.0),
+        (
+            display_id: 26, count: 8, interval: 2.5, speed: 2.5, health: 60.0, delay: 0.0, bounty: 5.0,
+            fight: (damage: 12.0, attack_interval: 1.4, attack_range: 1.6, aggro_radius: 6.0),
+        ),
         // Wolves at a run, catching up with the tail of the kobolds.
-        (display_id: 165, count: 6, interval: 1.5, speed: 7.0, health: 45.0, delay: 4.0, bounty: 4.0),
+        (
+            display_id: 165, count: 6, interval: 1.5, speed: 7.0, health: 45.0, delay: 4.0, bounty: 4.0,
+            fight: (damage: 10.0, attack_interval: 1.0, attack_range: 1.8, aggro_radius: 5.0),
+        ),
         // Kobolds again, at a run.
-        (display_id: 26, count: 10, interval: 1.2, speed: 4.5, health: 80.0, delay: 8.0, bounty: 6.0),
+        (
+            display_id: 26, count: 10, interval: 1.2, speed: 4.5, health: 80.0, delay: 8.0, bounty: 6.0,
+            fight: (damage: 14.0, attack_interval: 1.3, attack_range: 1.6, aggro_radius: 7.0),
+        ),
     ],
 )

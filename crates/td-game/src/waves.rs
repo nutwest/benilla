@@ -29,7 +29,7 @@ pub(crate) struct WaveRunner {
     spawned: u32,
     /// Seconds to the next spawn.
     timer: f32,
-    finished: bool,
+    pub(crate) finished: bool,
     /// Waves whose clearing grant has been paid.
     paid: Vec<bool>,
 }
@@ -80,6 +80,7 @@ fn run_waves(
     mut runner: ResMut<WaveRunner>,
     mut spawner: CreatureSpawner,
     mut moments: ResMut<ShotMoments>,
+    mut stats: ResMut<crate::balance::BattleStats>,
     enemies: Query<&Enemy>,
 ) {
     // Nothing walks before the field does.
@@ -136,7 +137,12 @@ fn run_waves(
         speed: wave.speed,
         health: wave.health,
         bounty: wave.bounty,
+        fight: wave.fight.clone(),
+        engaged: None,
+        cooldown: 0.0,
+        pending: None,
     });
+    stats.spawned += 1;
     if runner.spawned == 0 {
         info!(
             "wave {}/{}: {}x display {} at {} yd/s — lives {}",

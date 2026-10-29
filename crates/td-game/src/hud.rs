@@ -40,6 +40,8 @@ enum Action {
     Priority(Priority),
     Radius(f32),
     PickAnchor,
+    /// Commander only: the next click picks what it escorts.
+    PickEscort,
     Dismiss,
 }
 
@@ -62,6 +64,10 @@ struct UnitPanel;
 
 #[derive(Component)]
 struct UnitPanelText;
+
+/// A panel button shown only when the selection is (`true`) or is not (`false`) the commander.
+#[derive(Component)]
+struct CommanderOnly(bool);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<PointerOverHud>()
@@ -174,6 +180,7 @@ fn spawn(
             panel.spawn(row()).with_children(|row| {
                 button(row, "Hold", Action::Behaviour(Behaviour::Hold), &text);
                 button(row, "Guard", Action::Behaviour(Behaviour::Guard), &text);
+                tagged_button(row, "Escort…", Action::PickEscort, &text, CommanderOnly(true));
             });
             panel.spawn((Text::new("Target priority"), text(13.0, TEXT_DIM)));
             panel.spawn(row()).with_children(|row| {
@@ -191,7 +198,7 @@ fn spawn(
                 button(row, "Set post", Action::PickAnchor, &text);
             });
             panel.spawn(row()).with_children(|row| {
-                button(row, "Dismiss", Action::Dismiss, &text);
+                tagged_button(row, "Dismiss", Action::Dismiss, &text, CommanderOnly(false));
             });
         });
 }
@@ -228,9 +235,21 @@ fn button(
     action: Action,
     text: &impl Fn(f32, Color) -> (TextFont, TextColor),
 ) {
+    tagged_button(parent, label, action, text, ());
+}
+
+/// [`button`] with an extra bundle, e.g. a marker that shows or hides it.
+fn tagged_button(
+    parent: &mut ChildSpawnerCommands,
+    label: &str,
+    action: Action,
+    text: &impl Fn(f32, Color) -> (TextFont, TextColor),
+    extra: impl Bundle,
+) {
     parent
         .spawn((
             Button,
+            extra,
             Node {
                 padding: UiRect::axes(Val::Px(10.0), Val::Px(5.0)),
                 border: UiRect::all(Val::Px(1.0)),
@@ -301,7 +320,7 @@ fn press(
             _ => {
                 let Some(entity) = selection.unit else { continue };
                 let Ok(mut u) = units.get_mut(entity) else { continue };
-                let name = &defs.defs[u.def].name;
+                let name = defs.get(u.def).name.clone();
                 match *action {
                     Action::Behaviour(b) => {
                         u.behaviour = b;
@@ -318,11 +337,18 @@ fn press(
                             (u.guard_radius + step).clamp(GUARD_RADIUS_MIN, GUARD_RADIUS_MAX);
                         info!("unit: {name} guard radius {:.0}", u.guard_radius);
                     }
+                    Action::PickEscort => {
+                        selection.pick_escort = true;
+                        info!("unit: click the unit or structure {name} should escort");
+                    }
                     Action::PickAnchor => {
                         selection.pick_anchor = true;
                         info!("unit: click the ground to set {name}'s post");
                     }
                     Action::Dismiss => {
+                        if u.def == defs.commander_index() {
+                            continue;
+                        }
                         info!("unit: {name} dismissed");
                         commands.entity(entity).despawn();
                         selection.unit = None;
@@ -350,6 +376,9 @@ fn paint(
             Action::Behaviour(b) => selected.is_some_and(|u| u.behaviour == b),
             Action::Priority(p) => selected.is_some_and(|u| u.priority == p),
             Action::PickAnchor => selection.pick_anchor,
+            Action::PickEscort => {
+                selection.pick_escort || selected.is_some_and(|u| u.behaviour == Behaviour::Escort)
+            }
             Action::Radius(_) | Action::Dismiss => false,
         };
         let color = match (interaction, active) {
@@ -372,7 +401,7 @@ fn status(
     runner: Res<WaveRunner>,
     defs: Res<UnitDefs>,
     commander: Res<CommanderState>,
-    bodies: Query<&Commander>,
+    bodies: Query<&Unit, With<Commander>>,
     mut text: Query<&mut Text, With<StatusText>>,
 ) {
     let Ok(mut text) = text.single_mut() else { return };
@@ -387,10 +416,10 @@ fn status(
         commander.entity.and_then(|e| bodies.get(e).ok()),
         commander.respawn_at,
     ) {
-        (Some(c), _) => format!("{} {:.0}/{:.0}", defs.commander.name, c.health, defs.commander.health),
+        (Some(u), _) => format!("{} {:.0}/{:.0}", defs.commander.unit.name, u.health, defs.commander.unit.health),
         (None, Some(t)) => format!(
             "{} back in {:.0}s",
-            defs.commander.name,
+            defs.commander.unit.name,
             (t - time.elapsed_secs()).max(0.0).ceil()
         ),
         (None, None) => String::new(),
@@ -439,10 +468,22 @@ fn unit_panel(
     selection: Res<Selection>,
     defs: Res<UnitDefs>,
     units: Query<&Unit>,
-    mut panel: Query<&mut Node, With<UnitPanel>>,
+    mut panel: Query<&mut Node, (With<UnitPanel>, Without<CommanderOnly>)>,
+    mut only: Query<(&mut Node, &CommanderOnly), Without<UnitPanel>>,
     mut text: Query<&mut Text, With<UnitPanelText>>,
 ) {
     let selected = selection.unit.and_then(|e| units.get(e).ok());
+    let is_commander = selected.is_some_and(|u| u.def == defs.commander_index());
+    for (mut node, only) in &mut only {
+        let want = if only.0 == is_commander {
+            Display::Flex
+        } else {
+            Display::None
+        };
+        if node.display != want {
+            node.display = want;
+        }
+    }
     if let Ok(mut node) = panel.single_mut() {
         let want = if selected.is_some() {
             Display::Flex
@@ -456,7 +497,7 @@ fn unit_panel(
     let (Some(u), Ok(mut text)) = (selected, text.single_mut()) else {
         return;
     };
-    let d = &defs.defs[u.def];
+    let d = defs.get(u.def);
     let line = format!(
         "{}\nHealth {:.0}/{:.0}   Damage {:.0}\nRange {:.1}   Guard radius {:.0}",
         d.name, u.health, d.health, d.damage, d.attack_range, u.guard_radius

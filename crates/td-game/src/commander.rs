@@ -7,14 +7,18 @@
 //! orbits the camera alone, both buttons run forward, the wheel zooms and Space jumps. The camera
 //! follows behind, rides above the terrain, and pulls in when world geometry comes between it and
 //! the commander. Tab cycles targets among nearby enemies, and the commander auto-attacks its
-//! target in range, in either mode. If it dies it plays Death, the view is forced back to RTS,
-//! and it respawns by the exit after `respawn_secs`.
+//! target in range.
+//!
+//! Left to itself it is a unit ([`Unit`]) like any other, selectable in RTS mode, with Hold, Guard
+//! or the commander-only Escort (stay within its radius of a chosen unit or structure and defend
+//! it); leaving commander mode drops its post where it stands. Either way it holds up to `blocks`
+//! enemies in melee and enemies fight it. If it dies it plays Death, the view is forced back to
+//! RTS, and it respawns by the exit after `respawn_secs`, keeping its behaviour settings.
 //!
 //! For shots: `TD_COMMANDER_AT=<x>,<y>` places it elsewhere, and `TD_COMMANDER` takes
 //! comma-separated `enter@<s>` (switch to commander mode at that time), `auto` (in commander mode,
 //! target the nearest enemy and close on it), `face@<deg>` (the first spawn's facing, WoW yaw) and
-//! `kill@<s>` (drop it to 0 health). F9 does the
-//! same kill by hand; until enemies fight back (M6) it is the only way it falls.
+//! `kill@<s>` (drop it to 0 health). In a debug build F9 does the same kill by hand.
 
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseWheel};
 use bevy::prelude::*;
@@ -33,7 +37,8 @@ use crate::flow::Flow;
 use crate::grid::Grid;
 use crate::level::Level;
 use crate::shot::ShotMoments;
-use crate::units::{ground_circle, wow_xy, UnitDefs};
+use crate::fight_back::PlayerControlled;
+use crate::units::{ground_circle, wow_xy, Behaviour, Priority, Unit, UnitDefs};
 
 /// Where the commander stands at the start, yards from the exit back along the last road.
 const HOME_FROM_EXIT: f32 = 6.0;
@@ -77,7 +82,6 @@ const HIT_DELAY: f32 = 0.35;
 
 #[derive(Component)]
 pub struct Commander {
-    pub health: f32,
     pub target: Option<Entity>,
     /// Facing, Bevy yaw: forward is `rot_y(yaw) · −Z`.
     yaw: f32,
@@ -95,6 +99,8 @@ pub struct CommanderState {
     /// When a fallen commander comes back (`Time` seconds).
     pub respawn_at: Option<f32>,
     home: Option<Vec2>,
+    /// The behaviour, priority and radius it had when it fell, for the next body.
+    settings: Option<(Behaviour, Priority, f32)>,
 }
 
 /// The follow camera: its orbit around the commander and its boom.
@@ -191,7 +197,7 @@ fn spawn(
     if state.respawn_at.is_some_and(|t| time.elapsed_secs() < t) {
         return;
     }
-    let d = &defs.commander;
+    let d = &defs.commander.unit;
     if !spawner.ready(d.display_id) {
         return;
     }
@@ -216,15 +222,21 @@ fn spawn(
         return;
     };
     let yaw = facing.x.atan2(facing.z) + std::f32::consts::PI;
-    spawner.commands().entity(entity).insert(Commander {
-        health: d.health,
+    // As a unit it guards its post until told otherwise; a respawn keeps the player's settings.
+    let mut unit = Unit::new(defs.commander_index(), d, at);
+    if let Some((behaviour, priority, radius)) = state.settings {
+        unit.behaviour = behaviour;
+        unit.priority = priority;
+        unit.guard_radius = radius;
+    }
+    spawner.commands().entity(entity).insert((unit, Commander {
         target: None,
         yaw,
         cooldown: 0.0,
         pending: None,
         lift: 0.0,
         lift_speed: 0.0,
-    });
+    }));
     let again = state.respawn_at.take().is_some();
     state.entity = Some(entity);
     info!(
@@ -262,28 +274,45 @@ fn toggle(
     mut build: ResMut<crate::build::BuildMode>,
     mut recruit: ResMut<crate::units::UnitMode>,
     mut selection: ResMut<crate::units::Selection>,
+    mut commands: Commands,
     mut camera: Query<(&Transform, &Projection, &mut RtsCam)>,
-    commanders: Query<(&Transform, &Commander)>,
+    mut commanders: Query<(&Transform, &mut Commander, &mut Unit)>,
 ) {
     let now = time.elapsed_secs();
     let scripted = script.enter_at.is_some_and(|t| now >= t);
     if !(keys.just_pressed(KeyCode::KeyV) || scripted) {
         return;
     }
-    if scripted {
-        script.enter_at = None;
-    }
-    // No switch mid-blend, and none into commander mode without a living commander.
+    // No switch mid-blend, and none into commander mode without a living commander; a scripted
+    // switch waits for both.
     if mode.blend_progress(now).is_some() {
         return;
+    }
+    if scripted {
+        if state.entity.is_none() {
+            return;
+        }
+        script.enter_at = None;
     }
     let Ok((cam_xf, projection, mut rts)) = camera.single_mut() else {
         return;
     };
     let from = current_pose(cam_xf, projection);
-    let body = state.entity.and_then(|e| commanders.get(e).ok());
-    match (mode.mode, body) {
-        (Mode::Rts, Some((_, c))) => {
+    let Some(entity) = state.entity else {
+        if mode.mode == Mode::Rts {
+            info!("commander: none to take over yet");
+        }
+        return;
+    };
+    let Ok((xf, mut c, mut unit)) = commanders.get_mut(entity) else {
+        return;
+    };
+    match mode.mode {
+        Mode::Rts => {
+            // It may have walked and turned on its own since; steer on from how it stands.
+            let fwd = xf.rotation * Vec3::NEG_Z;
+            c.yaw = (-fwd.x).atan2(-fwd.z);
+            c.target = unit.target;
             follow.yaw = c.yaw;
             follow.pitch = 0.35;
             follow.boom = follow.distance;
@@ -292,12 +321,19 @@ fn toggle(
             recruit.def = None;
             selection.unit = None;
             selection.pick_anchor = false;
+            selection.pick_escort = false;
+            unit.target = None;
+            unit.pending = None;
+            commands.entity(entity).insert(PlayerControlled);
             mode.switch(Mode::Commander, from, now);
         }
-        (Mode::Rts, None) => info!("commander: none to take over yet"),
-        (Mode::Commander, body) => {
-            let at = body.map_or(rts.focus, |(xf, _)| xf.translation);
-            to_rts(&mut mode, &mut rts, &follow, at, from, now);
+        Mode::Commander => {
+            // Back to its own judgement, its post where it was left.
+            unit.anchor = wow_xy(xf.translation);
+            unit.target = None;
+            unit.path.clear();
+            commands.entity(entity).remove::<PlayerControlled>();
+            to_rts(&mut mode, &mut rts, &follow, xf.translation, from, now);
         }
     }
 }
@@ -318,7 +354,11 @@ fn control(
     mut follow: ResMut<FollowCam>,
     mut moments: ResMut<ShotMoments>,
     mut hits: MessageWriter<Hit>,
-    mut commanders: Query<(&mut Commander, &mut Transform, &mut CreatureAnim)>,
+    // Only while the player steers it; otherwise it is a unit like any other (`combat::think`).
+    mut commanders: Query<
+        (&mut Commander, &mut Transform, &mut CreatureAnim),
+        With<PlayerControlled>,
+    >,
     enemies: Query<(Entity, &Transform), (With<Enemy>, Without<Commander>)>,
 ) {
     let Ok((mut c, mut xf, mut anim)) = commanders.single_mut() else {
@@ -327,7 +367,7 @@ fn control(
     if anim.is_dead() {
         return;
     }
-    let d = &defs.commander;
+    let d = &defs.commander.unit;
     let now = time.elapsed_secs();
     let dt = time.delta_secs();
     let here = wow_xy(xf.translation);
@@ -515,25 +555,31 @@ fn fall(
     mut state: ResMut<CommanderState>,
     mut mode: ResMut<ControlMode>,
     mut camera: Query<(&Transform, &Projection, &mut RtsCam), Without<Commander>>,
-    mut commanders: Query<(&mut Commander, &Transform, &mut CreatureAnim)>,
+    mut stats: ResMut<crate::balance::BattleStats>,
+    mut commanders: Query<(&mut Unit, &Transform, &mut CreatureAnim), With<Commander>>,
 ) {
     let now = time.elapsed_secs();
     let Some(entity) = state.entity else { return };
-    let Ok((mut c, xf, mut anim)) = commanders.get_mut(entity) else {
+    let Ok((mut u, xf, mut anim)) = commanders.get_mut(entity) else {
         return;
     };
-    if keys.just_pressed(KeyCode::F9) || script.kill_at.is_some_and(|t| now >= t) {
+    // F9 is a debug-build key only; `kill@` is the scripted equivalent.
+    let debug_kill = cfg!(debug_assertions) && keys.just_pressed(KeyCode::F9);
+    if debug_kill || script.kill_at.is_some_and(|t| now >= t) {
         script.kill_at = None;
-        c.health = 0.0;
+        u.health = 0.0;
     }
-    if c.health > 0.0 {
+    if u.health > 0.0 {
         return;
     }
     anim.die();
+    state.settings = Some((u.behaviour, u.priority, u.guard_radius));
+    // No longer a unit: enemies let go of it, and nothing selects or steers the body.
     commands
         .entity(entity)
-        .remove::<Commander>()
+        .remove::<(Commander, Unit, PlayerControlled)>()
         .insert(Dying::new(now));
+    stats.commander_deaths += 1;
     state.entity = None;
     state.respawn_at = Some(now + defs.commander.respawn_secs);
     info!(

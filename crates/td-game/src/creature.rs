@@ -87,7 +87,7 @@ fn load_library(
         .iter()
         .map(|w| w.display_id)
         .chain(units.defs.iter().map(|u| u.display_id))
-        .chain(std::iter::once(units.commander.display_id));
+        .chain(std::iter::once(units.commander.unit.display_id));
     let mut displays = HashMap::new();
     for display_id in wanted {
         if displays.contains_key(&display_id) {

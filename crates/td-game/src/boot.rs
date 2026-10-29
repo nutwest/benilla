@@ -57,13 +57,18 @@ pub fn run(build: BuildId) -> AppExit {
     .add_plugins(benilla_world::mac_quit::MacQuitPlugin);
 
     // After `LogPlugin`, so the level's summary reaches the log.
-    let level = match crate::level::load() {
+    let mut level = match crate::level::load() {
         Ok(level) => level,
         Err(e) => {
             error!("level: {e}");
             return AppExit::error();
         }
     };
+    // `TD_WAVE_LIMIT=<n>`: a balance run of the first waves only.
+    if let Some(n) = std::env::var("TD_WAVE_LIMIT").ok().and_then(|v| v.parse().ok()) {
+        level.waves.truncate(n);
+        info!("level: first {n} wave(s) only");
+    }
 
     app.add_plugins(benilla_world::world_plugins::WorldPlugins);
     // What the engine needs told: the world is live, and it streams around the arena rather than
@@ -104,7 +109,12 @@ pub fn run(build: BuildId) -> AppExit {
         crate::units::plugin,
         crate::combat::plugin,
     ))
-    .add_plugins((crate::hud::plugin, crate::commander::plugin));
+    .add_plugins((
+        crate::hud::plugin,
+        crate::commander::plugin,
+        crate::fight_back::plugin,
+        crate::balance::plugin,
+    ));
 
     // After `AssetPlugin`: the loaders go into the live `AssetServer`, as in the viewer.
     benilla_assets::register_asset_loaders(&mut app);

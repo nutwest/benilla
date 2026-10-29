@@ -20,6 +20,9 @@
             behaviour: Guard,
             priority: Nearest,
             guard_radius: 8.0,
+            // How many enemies it holds in melee at once.
+            blocks: 2,
+            recovery_secs: 12.0,
         ),
         (
             id: "archer",
@@ -38,20 +41,31 @@
             behaviour: Hold,
             priority: First,
             guard_radius: 8.0,
+            recovery_secs: 15.0,
         ),
     ],
     // The player's commander: one per battle, placed by the exit at the start, steered directly
     // in commander mode (V), respawning by the exit `respawn_secs` after it falls.
     commander: (
-        name: "Commander",
-        // A large Redridge gnoll, until humanoid rendering lands.
-        display_id: 488,
-        health: 400.0,
-        damage: 30.0,
-        attack_range: 2.5,
-        attack_interval: 1.4,
-        move_speed: 7.0,
+        unit: (
+            id: "commander",
+            name: "Commander",
+            // A large Redridge gnoll, until humanoid rendering lands.
+            display_id: 488,
+            cost: (),
+            health: 380.0,
+            damage: 20.0,
+            attack_range: 2.5,
+            attack_interval: 1.5,
+            move_speed: 7.0,
+            attack: Melee,
+            attack_anims: [17, 18, 16],
+            // Left to itself it guards; Escort follows a chosen unit or structure.
+            behaviour: Guard,
+            priority: Nearest,
+            guard_radius: 10.0,
+            blocks: 3,
+        ),
         respawn_secs: 20.0,
-        attack_anims: [17, 18, 16],
     ),
 )

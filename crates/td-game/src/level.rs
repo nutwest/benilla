@@ -57,6 +57,33 @@ pub struct WaveDef {
     /// Gold per kill.
     #[serde(default)]
     pub bounty: f32,
+    /// What each enemy does to a unit in its way (DESIGN.md section 1.4).
+    #[serde(default)]
+    pub fight: EnemyFight,
+}
+
+/// An enemy's combat: melee damage on an interval, in reach, against units that come within its
+/// aggro radius.
+#[derive(Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct EnemyFight {
+    pub damage: f32,
+    pub attack_interval: f32,
+    pub attack_range: f32,
+    pub aggro_radius: f32,
+    pub attack_anims: Vec<u16>,
+}
+
+impl Default for EnemyFight {
+    fn default() -> Self {
+        Self {
+            damage: 8.0,
+            attack_interval: 1.5,
+            attack_range: 1.6,
+            aggro_radius: 6.0,
+            attack_anims: vec![17, 16],
+        }
+    }
 }
 
 /// A road corridor: a polyline in WoW `(x, y)` and its full width in yards.

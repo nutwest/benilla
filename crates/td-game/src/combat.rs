@@ -17,6 +17,7 @@ use crate::enemy::{Enemy, EnemyMove};
 use crate::flow::Flow;
 use crate::grid::Grid;
 use crate::shot::ShotMoments;
+use crate::fight_back::{KnockedOut, PlayerControlled};
 use crate::units::{wow_xy, AttackKind, Behaviour, Priority, Unit, UnitDefs};
 
 /// A guard chases a target this far past its radius before giving it up.
@@ -30,6 +31,9 @@ const RANGE_SLACK: f32 = 0.3;
 
 /// A guard back within this of its anchor stops walking.
 const HOME: f32 = 0.5;
+
+/// An escort with nothing to fight keeps within this share of its radius of its charge.
+const ESCORT_SLACK: f32 = 0.4;
 
 /// Seconds between path searches while a goal moves.
 const REPATH: f32 = 0.4;
@@ -112,7 +116,11 @@ fn think(
     heights: TerrainHeights,
     mut hits: MessageWriter<Hit>,
     mut moments: ResMut<ShotMoments>,
-    mut units: Query<(&mut Unit, &mut Transform, &mut CreatureAnim)>,
+    mut units: Query<
+        (&mut Unit, &mut Transform, &mut CreatureAnim),
+        (Without<KnockedOut>, Without<PlayerControlled>),
+    >,
+    charges: Query<&GlobalTransform>,
     enemies: Query<(Entity, &Transform, &Enemy), Without<Unit>>,
 ) {
     let now = time.elapsed_secs();
@@ -133,7 +141,7 @@ fn think(
     let find = |e: Entity| candidates.iter().find(|c| c.entity == e);
 
     for (mut u, mut xf, mut anim) in &mut units {
-        let d = &defs.defs[u.def];
+        let d = defs.get(u.def);
         let here = wow_xy(xf.translation);
         u.cooldown -= dt;
 
@@ -171,12 +179,26 @@ fn think(
             }
         }
 
+        // An escort's post moves with its charge; a charge gone (dead, sold) leaves it where it was.
+        if u.behaviour == Behaviour::Escort {
+            if let Some(at) = u.escort.and_then(|e| charges.get(e).ok()) {
+                u.anchor = wow_xy(at.translation());
+            }
+        }
+
         // Keep the target while it stays fair game; else pick one by priority.
         let zone = |c: &Candidate, slack: f32| match u.behaviour {
             Behaviour::Hold => c.at.distance(here) <= d.attack_range + RANGE_SLACK + slack,
-            Behaviour::Guard => c.at.distance(u.anchor) <= u.guard_radius + slack,
+            Behaviour::Guard | Behaviour::Escort => {
+                c.at.distance(u.anchor) <= u.guard_radius + slack
+            }
         };
-        let leash = if u.behaviour == Behaviour::Guard { LEASH } else { 0.0 };
+        let leash = if u.behaviour == Behaviour::Hold { 0.0 } else { LEASH };
+        // A guard walks all the way home; an escort only back within reach of its charge.
+        let home = match u.behaviour {
+            Behaviour::Escort => (u.guard_radius * ESCORT_SLACK).max(HOME),
+            _ => HOME,
+        };
         let keep = u.target.and_then(find).is_some_and(|c| zone(c, leash));
         if !keep {
             u.target = pick(u.priority, here, candidates.iter().filter(|c| zone(c, 0.0)));
@@ -196,8 +218,10 @@ fn think(
                 }
                 None
             }
-            (Behaviour::Guard, Some(c)) => Some(c.at),
-            (Behaviour::Guard, None) if here.distance(u.anchor) > HOME => Some(u.anchor),
+            (Behaviour::Guard | Behaviour::Escort, Some(c)) => Some(c.at),
+            (Behaviour::Guard | Behaviour::Escort, None) if here.distance(u.anchor) > home => {
+                Some(u.anchor)
+            }
             _ => {
                 anim.set(Gait::Stand, 0.0);
                 None
@@ -319,6 +343,7 @@ fn resolve_hits(
     time: Res<Time>,
     mut hits: MessageReader<Hit>,
     mut stores: ResMut<Stores>,
+    mut stats: ResMut<crate::balance::BattleStats>,
     mut enemies: Query<(&mut Enemy, &mut CreatureAnim)>,
 ) {
     for hit in hits.read() {
@@ -338,6 +363,7 @@ fn resolve_hits(
             fading: false,
         });
         info!("kill: a wave {} enemy", enemy.wave + 1);
+        stats.kills += 1;
         stores.grant(
             Amount {
                 gold: enemy.bounty,
