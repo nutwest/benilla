@@ -1,7 +1,8 @@
-//! A basic HUD in Bevy UI (no FrameXML): a status bar (stores, lives, wave) along the top, build
-//! and recruit buttons along the bottom, and a panel for the selected unit's behaviour, target
-//! priority, guard radius and anchor. The face is the game's own Friz Quadrata
-//! (`Fonts\FRIZQT__.TTF`), read from the install like every other asset.
+//! A basic HUD in Bevy UI (no FrameXML): a status bar (stores, lives, wave, commander) along the
+//! top, build and recruit buttons along the bottom (RTS mode only) above the current mode's
+//! controls, and a panel for the selected unit's behaviour, target priority, guard radius and
+//! anchor. The face is the game's own Friz Quadrata (`Fonts\FRIZQT__.TTF`), read from the install
+//! like every other asset.
 //!
 //! Every HUD node takes the pointer: while it is over one, world clicks (placing, building,
 //! selecting) are ignored ([`PointerOverHud`]). The keyboard shortcuts stay as they were.
@@ -10,6 +11,8 @@ use bevy::prelude::*;
 use bevy::ui::{FocusPolicy, UiSystems};
 
 use crate::build::BuildMode;
+use crate::camera::{ControlMode, Mode};
+use crate::commander::{Commander, CommanderState};
 use crate::economy::{Amount, Stores};
 use crate::level::Level;
 use crate::structures::StructureDefs;
@@ -48,6 +51,13 @@ pub struct PointerOverHud(pub bool);
 struct StatusText;
 
 #[derive(Component)]
+struct HintText;
+
+/// Shown only in RTS mode: the build and recruit rows.
+#[derive(Component)]
+struct RtsOnly;
+
+#[derive(Component)]
 struct UnitPanel;
 
 #[derive(Component)]
@@ -57,7 +67,7 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<PointerOverHud>()
         .add_systems(Startup, spawn.after(crate::structures::load_defs))
         .add_systems(PreUpdate, track_pointer.after(UiSystems::Focus))
-        .add_systems(Update, (press, paint, status, unit_panel));
+        .add_systems(Update, (press, paint, status, unit_panel, mode_widgets));
 }
 
 fn spawn(
@@ -107,32 +117,33 @@ fn spawn(
                 Interaction::default(),
             ))
             .with_children(|bar| {
-                if let Some(structures) = &structures {
-                    bar.spawn(row()).with_children(|row| {
-                        row.spawn((Text::new("Build"), text(16.0, TEXT_DIM), label_node()));
-                        for (i, d) in structures.defs.iter().enumerate() {
-                            button(row, &format!("{}\n{}", d.name, short_cost(&d.cost)), Action::Structure(i), &text);
+                // Build and recruit: RTS mode only.
+                bar.spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        ..default()
+                    },
+                    RtsOnly,
+                ))
+                .with_children(|rows| {
+                    if let Some(structures) = &structures {
+                        rows.spawn(row()).with_children(|row| {
+                            row.spawn((Text::new("Build"), text(16.0, TEXT_DIM), label_node()));
+                            for (i, d) in structures.defs.iter().enumerate() {
+                                button(row, &format!("{}\n{}", d.name, short_cost(&d.cost)), Action::Structure(i), &text);
+                            }
+                        });
+                    }
+                    rows.spawn(row()).with_children(|row| {
+                        row.spawn((Text::new("Recruit"), text(16.0, TEXT_DIM), label_node()));
+                        for (i, d) in units.defs.iter().enumerate() {
+                            button(row, &format!("{}\n{}", d.name, short_cost(&d.cost)), Action::Unit(i), &text);
                         }
                     });
-                }
-                bar.spawn(row()).with_children(|row| {
-                    row.spawn((Text::new("Recruit"), text(16.0, TEXT_DIM), label_node()));
-                    for (i, d) in units.defs.iter().enumerate() {
-                        button(row, &format!("{}\n{}", d.name, short_cost(&d.cost)), Action::Unit(i), &text);
-                    }
-                    row.spawn((
-                        Text::new(
-                            "Click a button, then the ground · R turn · Esc cancel · X sell · \
-                             click a unit to select · F1–F4 overlays",
-                        ),
-                        text(13.0, TEXT_DIM),
-                        Node {
-                            margin: UiRect::left(Val::Px(16.0)),
-                            align_self: AlignSelf::Center,
-                            ..default()
-                        },
-                    ));
                 });
+                // The controls of the mode in use.
+                bar.spawn((Text::new(""), text(13.0, TEXT_DIM), HintText));
             });
         });
 
@@ -352,11 +363,16 @@ fn paint(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn status(
+    time: Res<Time>,
     stores: Res<Stores>,
     lives: Res<Lives>,
     level: Res<Level>,
     runner: Res<WaveRunner>,
+    defs: Res<UnitDefs>,
+    commander: Res<CommanderState>,
+    bodies: Query<&Commander>,
     mut text: Query<&mut Text, With<StatusText>>,
 ) {
     let Ok(mut text) = text.single_mut() else { return };
@@ -367,8 +383,20 @@ fn status(
     } else {
         format!("{}/{total}", (runner.index + 1).min(total))
     };
+    let chief = match (
+        commander.entity.and_then(|e| bodies.get(e).ok()),
+        commander.respawn_at,
+    ) {
+        (Some(c), _) => format!("{} {:.0}/{:.0}", defs.commander.name, c.health, defs.commander.health),
+        (None, Some(t)) => format!(
+            "{} back in {:.0}s",
+            defs.commander.name,
+            (t - time.elapsed_secs()).max(0.0).ceil()
+        ),
+        (None, None) => String::new(),
+    };
     let line = format!(
-        "Gold {}    Food {}    Lumber {}    Stone {}        Lives {}        Wave {wave}",
+        "Gold {}    Food {}    Lumber {}    Stone {}        Lives {}        Wave {wave}        {chief}",
         a.gold.floor(),
         a.food.floor(),
         a.lumber.floor(),
@@ -377,6 +405,33 @@ fn status(
     );
     if text.0 != line {
         text.0 = line;
+    }
+}
+
+/// The build rows shown only in RTS mode, and the hint line for the mode in use.
+fn mode_widgets(
+    mode: Res<ControlMode>,
+    mut rows: Query<&mut Node, With<RtsOnly>>,
+    mut hint: Query<&mut Text, With<HintText>>,
+) {
+    let rts = mode.mode == Mode::Rts;
+    for mut node in &mut rows {
+        let want = if rts { Display::Flex } else { Display::None };
+        if node.display != want {
+            node.display = want;
+        }
+    }
+    let line = if rts {
+        "Click a button, then the ground · R turn · Esc cancel · X sell · click a unit to \
+         select · WASD pan · Q/E or right-drag turn · wheel zoom · V commander · F1–F4 overlays"
+    } else {
+        "W/S run · A/D turn · Q/E strafe · right-drag steer · left-drag look · both buttons run · \
+         wheel zoom · Space jump · Tab target · V back to RTS"
+    };
+    if let Ok(mut text) = hint.single_mut() {
+        if text.0 != line {
+            text.0 = line.to_string();
+        }
     }
 }
 

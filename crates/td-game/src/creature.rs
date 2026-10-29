@@ -81,12 +81,13 @@ fn load_library(
         }
     }
 
-    // The enemies' displays and the player's units'.
+    // The enemies' displays, the player's units' and the commander's.
     let wanted = level
         .waves
         .iter()
         .map(|w| w.display_id)
-        .chain(units.defs.iter().map(|u| u.display_id));
+        .chain(units.defs.iter().map(|u| u.display_id))
+        .chain(std::iter::once(units.commander.display_id));
     let mut displays = HashMap::new();
     for display_id in wanted {
         if displays.contains_key(&display_id) {

@@ -40,4 +40,18 @@
             guard_radius: 8.0,
         ),
     ],
+    // The player's commander: one per battle, placed by the exit at the start, steered directly
+    // in commander mode (V), respawning by the exit `respawn_secs` after it falls.
+    commander: (
+        name: "Commander",
+        // A large Redridge gnoll, until humanoid rendering lands.
+        display_id: 488,
+        health: 400.0,
+        damage: 30.0,
+        attack_range: 2.5,
+        attack_interval: 1.4,
+        move_speed: 7.0,
+        respawn_secs: 20.0,
+        attack_anims: [17, 18, 16],
+    ),
 )

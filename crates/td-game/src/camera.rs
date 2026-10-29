@@ -1,6 +1,11 @@
-//! The RTS camera: an eye on a boom over a ground focus, at a fixed pitch. WASD or the arrows pan,
-//! Q and E or a right drag turn, the wheel zooms. The focus rides the terrain height and stays
-//! inside the arena.
+//! The world camera and its two modes. In RTS mode it is an eye on a boom over a ground focus, at
+//! a fixed pitch: WASD or the arrows pan, Q and E or a right drag turn, the wheel zooms, and the
+//! focus rides the terrain inside the arena. In commander mode [`crate::commander`] computes the
+//! pose ([`CommanderPose`]) and this module only applies it.
+//!
+//! A mode switch blends position, rotation and field of view from where the camera was to the new
+//! mode's live pose over [`BLEND_SECS`], eased in and out; no camera input is read meanwhile
+//! ([`ControlMode::settled`]).
 
 use bevy::camera::{PerspectiveProjection, Projection};
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -23,7 +28,7 @@ const ARENA_RADIUS: f32 = 200.0;
 /// The boom length's range, in yards, and where it opens.
 const DISTANCE_MIN: f32 = 20.0;
 const DISTANCE_MAX: f32 = 160.0;
-const DISTANCE_START: f32 = 40.0;
+pub const DISTANCE_START: f32 = 40.0;
 
 /// Pan speed in boom lengths per second, so a zoomed-out pan covers more ground.
 const PAN_RATE: f32 = 0.9;
@@ -35,7 +40,79 @@ const DRAG_TURN: f32 = 0.004;
 /// How fast the focus height eases to the ground, per second.
 const GROUND_EASE: f32 = 8.0;
 
-/// The camera's pose: the ground point it looks at, its heading, pitch and boom length.
+/// A mode switch's camera blend, in seconds.
+pub const BLEND_SECS: f32 = 0.7;
+
+/// The RTS view's vertical field of view.
+const RTS_FOV: f32 = benilla_world::view::CAM_FOVY;
+
+/// Which controller owns the camera.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mode {
+    Rts,
+    Commander,
+}
+
+/// A camera pose: where the eye is, where it looks, and its vertical field of view.
+#[derive(Clone, Copy, Debug)]
+pub struct CamPose {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub fov: f32,
+}
+
+impl CamPose {
+    fn lerp(&self, to: &CamPose, t: f32) -> CamPose {
+        CamPose {
+            translation: self.translation.lerp(to.translation, t),
+            rotation: self.rotation.slerp(to.rotation, t),
+            fov: self.fov + (to.fov - self.fov) * t,
+        }
+    }
+}
+
+/// The current mode and any blend into it.
+#[derive(Resource)]
+pub struct ControlMode {
+    pub mode: Mode,
+    /// The pose the blend started from and when (`Time` seconds).
+    blend: Option<(CamPose, f32)>,
+}
+
+impl ControlMode {
+    /// In `mode` with no blend running: its input may be read.
+    pub fn settled(&self, mode: Mode) -> bool {
+        self.mode == mode && self.blend.is_none()
+    }
+
+    /// How far a running blend has got, `0..1`.
+    pub fn blend_progress(&self, now: f32) -> Option<f32> {
+        self.blend
+            .map(|(_, started)| ((now - started) / BLEND_SECS).clamp(0.0, 1.0))
+    }
+
+    /// Switches to `to`, blending from `from`, the camera's pose now.
+    pub fn switch(&mut self, to: Mode, from: CamPose, now: f32) {
+        self.mode = to;
+        self.blend = Some((from, now));
+        info!("camera: → {to:?}");
+    }
+}
+
+/// A run condition: the RTS controls (building, recruiting, selecting) take input.
+pub fn rts_input(mode: Res<ControlMode>) -> bool {
+    mode.settled(Mode::Rts)
+}
+
+/// The commander controller's pose this frame, written before [`CameraApply`].
+#[derive(Resource, Default)]
+pub struct CommanderPose(pub Option<CamPose>);
+
+/// The system that writes the camera's transform and field of view.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CameraApply;
+
+/// The RTS camera's state: the ground point it looks at, its heading, pitch and boom length.
 #[derive(Component)]
 pub struct RtsCam {
     /// Bevy space; `y` follows the terrain.
@@ -71,13 +148,20 @@ fn pose_from_env(cam: &mut RtsCam) {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(
+    app.insert_resource(ControlMode {
+        mode: Mode::Rts,
+        blend: None,
+    })
+    .init_resource::<CommanderPose>()
+    .add_systems(
         Startup,
         spawn_camera.after(benilla_assets::AssetSet::Open),
     )
     .add_systems(
         Update,
-        control.in_set(benilla_world::schedule::WorldStage::Input),
+        (rts_control, apply.in_set(CameraApply))
+            .chain()
+            .in_set(benilla_world::schedule::WorldStage::Input),
     );
 }
 
@@ -102,25 +186,52 @@ fn spawn_camera(
         Projection::from(PerspectiveProjection {
             far: benilla_world::view::CAM_FAR,
             near: benilla_world::view::NEARCLIP_DEFAULT,
-            fov: benilla_world::view::CAM_FOVY,
+            fov: RTS_FOV,
             ..default()
         }),
         Hdr,
         Tonemapping::None,
         benilla_world::ffx_glow::FfxGlow::WORLD,
-        eye_transform(&cam),
+        rts_pose(&cam).transform(),
         cam,
     ));
 }
 
-/// The eye on the boom: behind the focus along the heading, raised by the pitch, looking at it.
-fn eye_transform(cam: &RtsCam) -> Transform {
-    let boom = Quat::from_rotation_y(cam.yaw) * Vec3::new(0.0, cam.pitch.sin(), cam.pitch.cos());
-    Transform::from_translation(cam.focus + boom * cam.distance).looking_at(cam.focus, Vec3::Y)
+impl CamPose {
+    pub fn transform(&self) -> Transform {
+        Transform::from_translation(self.translation).with_rotation(self.rotation)
+    }
 }
 
-fn control(
+/// The eye on the boom: behind the focus along the heading, raised by the pitch, looking at it.
+fn rts_pose(cam: &RtsCam) -> CamPose {
+    let boom = Quat::from_rotation_y(cam.yaw) * Vec3::new(0.0, cam.pitch.sin(), cam.pitch.cos());
+    let xf = Transform::from_translation(cam.focus + boom * cam.distance)
+        .looking_at(cam.focus, Vec3::Y);
+    CamPose {
+        translation: xf.translation,
+        rotation: xf.rotation,
+        fov: RTS_FOV,
+    }
+}
+
+/// The camera's pose as it stands, for a blend's start.
+pub fn current_pose(xf: &Transform, projection: &Projection) -> CamPose {
+    let fov = match projection {
+        Projection::Perspective(p) => p.fov,
+        _ => RTS_FOV,
+    };
+    CamPose {
+        translation: xf.translation,
+        rotation: xf.rotation,
+        fov,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rts_control(
     time: Res<Time>,
+    mode: Res<ControlMode>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
@@ -128,59 +239,62 @@ fn control(
     mut window: Query<&mut bevy::window::CursorOptions, With<PrimaryWindow>>,
     heights: TerrainHeights,
     level: Res<Level>,
-    mut cams: Query<(&mut Transform, &mut RtsCam)>,
+    mut cams: Query<&mut RtsCam>,
 ) {
-    let Ok((mut xf, mut cam)) = cams.single_mut() else {
+    let Ok(mut cam) = cams.single_mut() else {
         return;
     };
     let dt = time.delta_secs();
 
-    let dragging = buttons.pressed(MouseButton::Right);
-    if let Ok(mut cursor) = window.single_mut() {
-        let want = if dragging {
-            CursorGrabMode::Locked
-        } else {
-            CursorGrabMode::None
-        };
-        if cursor.grab_mode != want {
-            cursor.grab_mode = want;
-            cursor.visible = !dragging;
+    // Input only while settled in RTS mode; the focus keeps riding the ground regardless.
+    if mode.settled(Mode::Rts) {
+        let dragging = buttons.pressed(MouseButton::Right);
+        if let Ok(mut cursor) = window.single_mut() {
+            let want = if dragging {
+                CursorGrabMode::Locked
+            } else {
+                CursorGrabMode::None
+            };
+            if cursor.grab_mode != want {
+                cursor.grab_mode = want;
+                cursor.visible = !dragging;
+            }
         }
-    }
-    if dragging {
-        cam.yaw -= motion.delta.x * DRAG_TURN;
-    }
-    if keys.pressed(KeyCode::KeyQ) {
-        cam.yaw += TURN_RATE * dt;
-    }
-    if keys.pressed(KeyCode::KeyE) {
-        cam.yaw -= TURN_RATE * dt;
-    }
+        if dragging {
+            cam.yaw -= motion.delta.x * DRAG_TURN;
+        }
+        if keys.pressed(KeyCode::KeyQ) {
+            cam.yaw += TURN_RATE * dt;
+        }
+        if keys.pressed(KeyCode::KeyE) {
+            cam.yaw -= TURN_RATE * dt;
+        }
 
-    for ev in wheel.read() {
-        cam.distance = (cam.distance * (1.0 - ev.y * 0.1)).clamp(DISTANCE_MIN, DISTANCE_MAX);
-    }
+        for ev in wheel.read() {
+            cam.distance = (cam.distance * (1.0 - ev.y * 0.1)).clamp(DISTANCE_MIN, DISTANCE_MAX);
+        }
 
-    // Pan on the ground plane, relative to the heading.
-    let rot = Quat::from_rotation_y(cam.yaw);
-    let forward = rot * Vec3::NEG_Z;
-    let right = rot * Vec3::X;
-    let mut dir = Vec3::ZERO;
-    if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
-        dir += forward;
-    }
-    if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
-        dir -= forward;
-    }
-    if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
-        dir += right;
-    }
-    if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
-        dir -= right;
-    }
-    if dir != Vec3::ZERO {
-        let step = dir.normalize() * cam.distance * PAN_RATE * dt;
-        cam.focus += step;
+        // Pan on the ground plane, relative to the heading.
+        let rot = Quat::from_rotation_y(cam.yaw);
+        let forward = rot * Vec3::NEG_Z;
+        let right = rot * Vec3::X;
+        let mut dir = Vec3::ZERO;
+        if keys.any_pressed([KeyCode::KeyW, KeyCode::ArrowUp]) {
+            dir += forward;
+        }
+        if keys.any_pressed([KeyCode::KeyS, KeyCode::ArrowDown]) {
+            dir -= forward;
+        }
+        if keys.any_pressed([KeyCode::KeyD, KeyCode::ArrowRight]) {
+            dir += right;
+        }
+        if keys.any_pressed([KeyCode::KeyA, KeyCode::ArrowLeft]) {
+            dir -= right;
+        }
+        if dir != Vec3::ZERO {
+            let step = dir.normalize() * cam.distance * PAN_RATE * dt;
+            cam.focus += step;
+        }
     }
 
     // Keep the focus inside the arena, measured on the ground plane.
@@ -201,6 +315,46 @@ fn control(
             cam.grounded = true;
         }
     }
+}
 
-    *xf = eye_transform(&cam);
+/// `smoothstep`'s steeper cousin: slow out, fast through the middle, slow in.
+fn ease_in_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - (-2.0 * t + 2.0).powi(3) * 0.5
+    }
+}
+
+/// Writes the mode's pose, or the blend into it, to the camera.
+fn apply(
+    time: Res<Time>,
+    mut mode: ResMut<ControlMode>,
+    commander: Res<CommanderPose>,
+    mut cams: Query<(&RtsCam, &mut Transform, &mut Projection)>,
+) {
+    let Ok((rts, mut xf, mut projection)) = cams.single_mut() else {
+        return;
+    };
+    let target = match mode.mode {
+        Mode::Rts => rts_pose(rts),
+        Mode::Commander => commander.0.unwrap_or_else(|| rts_pose(rts)),
+    };
+    let now = time.elapsed_secs();
+    let pose = match (mode.blend, mode.blend_progress(now)) {
+        (Some((from, _)), Some(t)) => {
+            if t >= 1.0 {
+                mode.blend = None;
+            }
+            from.lerp(&target, ease_in_out(t))
+        }
+        _ => target,
+    };
+    *xf = pose.transform();
+    if let Projection::Perspective(p) = &mut *projection {
+        if p.fov != pose.fov {
+            p.fov = pose.fov;
+        }
+    }
 }

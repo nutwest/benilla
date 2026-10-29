@@ -76,7 +76,12 @@ pub fn plugin(app: &mut App) {
         })
         .add_systems(
             Update,
-            (keys, run_script, aim_and_build, sell_under_cursor)
+            (
+                keys.run_if(crate::camera::rts_input),
+                run_script,
+                aim_and_build,
+                sell_under_cursor.run_if(crate::camera::rts_input),
+            )
                 .chain()
                 .in_set(crate::grid::GridSet)
                 .after(crate::grid::bake),

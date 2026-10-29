@@ -101,14 +101,31 @@ pub struct UnitDef {
     pub guard_radius: f32,
 }
 
+/// The commander: not recruited, one per battle.
+#[derive(Deserialize, Clone, Debug)]
+pub struct CommanderDef {
+    pub name: String,
+    pub display_id: u32,
+    pub health: f32,
+    pub damage: f32,
+    pub attack_range: f32,
+    /// Seconds between attacks.
+    pub attack_interval: f32,
+    pub move_speed: f32,
+    pub respawn_secs: f32,
+    pub attack_anims: Vec<u16>,
+}
+
 #[derive(Deserialize)]
 struct UnitsFile {
     units: Vec<UnitDef>,
+    commander: CommanderDef,
 }
 
 #[derive(Resource)]
 pub struct UnitDefs {
     pub defs: Vec<UnitDef>,
+    pub commander: CommanderDef,
 }
 
 /// Reads `data/units.ron`; at boot, so the creature library can preload every unit's display.
@@ -117,7 +134,10 @@ pub fn load() -> Result<UnitDefs, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
     let file: UnitsFile = ron::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
     info!("units: {} defs from {path}", file.units.len());
-    Ok(UnitDefs { defs: file.units })
+    Ok(UnitDefs {
+        defs: file.units,
+        commander: file.commander,
+    })
 }
 
 /// A recruited unit and its live state.
@@ -184,7 +204,14 @@ pub fn plugin(app: &mut App) {
         })
         .add_systems(
             Update,
-            (mode_keys, run_script, click, selected_keys, draw_radii).chain(),
+            (
+                mode_keys.run_if(crate::camera::rts_input),
+                run_script,
+                click.run_if(crate::camera::rts_input),
+                selected_keys.run_if(crate::camera::rts_input),
+                draw_radii,
+            )
+                .chain(),
         );
 }
 

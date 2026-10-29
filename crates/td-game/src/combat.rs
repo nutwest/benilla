@@ -68,11 +68,21 @@ pub struct Projectile {
     age: f32,
 }
 
-/// A dead enemy's teardown clock.
+/// A dead body's teardown clock.
 #[derive(Component)]
 pub struct Dying {
     since: f32,
     fading: bool,
+}
+
+impl Dying {
+    /// A body that died at `now`: it holds its pose, fades and is despawned.
+    pub fn new(now: f32) -> Self {
+        Self {
+            since: now,
+            fading: false,
+        }
+    }
 }
 
 pub fn plugin(app: &mut App) {
