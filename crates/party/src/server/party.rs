@@ -26,6 +26,8 @@ use super::layout::Layout;
 use super::setup::Secrets;
 use super::{Phase, Supervisor};
 
+mod swap_test;
+
 /// The party's characters, by account: name, `ChrClasses` id, class name. All human, so a new
 /// party starts together in Northshire.
 const ROSTER: [(&str, u8, &str); 3] = [
@@ -87,6 +89,9 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
     wait(sup, "enter the world", || {
         Ok(sup.in_world.load(Ordering::Relaxed))
     })?;
+    // A swap moves the group's lead and the group keeps it; a party bot that leads its group
+    // removes itself.
+    sup.ask(SessionRequest::Command(".party lead".into()));
     load_bots(sup, db, &members, active)?;
     record_played(layout, members[active].name);
     sup.cover.store(false, Ordering::Relaxed);
@@ -100,6 +105,12 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
         if let Err(err) = checks(sup, layout, db, &members, &mut active) {
             warn!("party: M1 checks failed: {err:#}");
         }
+    }
+    if std::env::var_os("PARTY_SWAP_TEST").is_some() {
+        if let Err(err) = swap_test::swap_checks(sup, layout, db, &members, &mut active) {
+            warn!("party: swap checks failed: {err:#}");
+        }
+        record_played(layout, members[active].name);
     }
     while !sup.cancelled() {
         if sup.switch_key.swap(false, Ordering::Relaxed) {

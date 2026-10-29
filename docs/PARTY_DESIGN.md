@@ -265,9 +265,20 @@ Read from vmangos at the pinned commit (`9b7fb4d`) and benilla-app.
 
 **The login burst the client needs for B.** Taken from `HandlePlayerLogin` and
 `SendInitialPackets*`. Each item is sent to the client's socket, now on B's session.
-1. Our own notice, `SMSG_PARTY_SWAP {old, new}`, first, so benilla moves its identity before the
-   data arrives. 1.12 has no such opcode, so this is a custom opcode in an unused number, added to
-   both the vmangos fork and benilla-protocol.
+1. Our own notice, `SMSG_PARTY_SWAP`, first, so benilla moves its identity before the data
+   arrives. 1.12 has no such opcode, so it is a custom one, outside the client's table:
+
+   | Field | Type | Meaning |
+   |---|---|---|
+   | opcode | `uint16` `0x0400` (1024) | The 1.12 table ends at 827 (`NUM_MSG_TYPES` 828). Defined in the fork's `Opcodes.h`. |
+   | old | `uint64` guid, unpacked | The character the client played until now. |
+   | new | `uint64` guid, unpacked | The character it plays from now on. |
+
+   - The body is 16 bytes, little-endian like every 1.12 body, under the ordinary server header
+     (`uint16` size, big-endian, then the opcode).
+   - It is sent only to the client that asked for the swap. A stock 1.12 client would not know it.
+   - benilla-protocol never fails on an unknown opcode, so a client without M1c support just
+     drops it.
 2. The self object: `SMSG_UPDATE_OBJECT` creates B with `UPDATEFLAG_SELF` and every owner-only
    field, plus B's item objects. This is what `Map::SendInitSelf` builds. Destroys go out for A's
    items, which the client may no longer hold.
@@ -287,7 +298,11 @@ Read from vmangos at the pinned commit (`9b7fb4d`) and benilla-app.
    holds, which benilla applies in place (`net/objects.rs` `Landing::Live`).
 7. Left out:
    - `SMSG_LOGIN_VERIFY_WORLD`, which is the client's world-entry and loading-screen edge;
-   - the MOTD and the cinematic.
+   - the MOTD and the cinematic;
+   - `SMSG_CLIENT_CONTROL_UPDATE`, which a reconnect sends (`UpdateControl`). A login sends none:
+     the client claims its own mover. A benilla without M1c took it as a possession grant, claimed
+     B and drove a body it had no terrain for. B fell through the world in the first M1b run. On
+     `SMSG_PARTY_SWAP` the client claims B itself (`CMSG_SET_ACTIVE_MOVER`).
 
 **In benilla-app: what has to change to switch the player identity at runtime.**
 - **Identity.**
@@ -461,12 +476,7 @@ The game starts and stops its own server. The player never runs or configures an
 Steps:
 
 1. **M1a: build vmangos from source.** Done; see the next section.
-2. **Server: `.party swap <name>`**, admin-only, the target a party bot of ours in our group.
-   - The chat handler only validates and queues a world task.
-   - The task runs at `World::Update`'s single-threaded point and performs §2.1's handover:
-     socket, bot role, mover, anticheat, leader and group lead, broadcaster.
-   - Then it sends `SMSG_PARTY_SWAP` and the burst.
-   - Log every step with timestamps.
+2. **M1b: server `.party swap <name>`.** Done; see the M1b section below.
 3. **benilla-protocol:** parse `SMSG_PARTY_SWAP`, emitted as `SessionEvent::PartySwap { old, new }`.
 4. **benilla-app (E1).** On `PartySwap`:
    - move `SelfGuid` and `SelfPlayer`;
@@ -497,6 +507,97 @@ Steps:
   before and after) and no server error.
 - Each swap is under 1 s, measured from F6 to the UI being up.
 - Screenshots are taken before and after a swap.
+
+**M1b — The server swap.** Done, in the fork's branch `party` (`src/game/PlayerBots/PartySwap.cpp`
+and the pieces listed below).
+
+- **Commands** (`SEC_ADMINISTRATOR`, in-game only):
+  - `.party swap <name>`. The client's character must be played by its client and not be logging
+    in or out. The target must be:
+    - one of its party bots, online, initialized and following it;
+    - in its group and on its map;
+    - not teleporting or flying.
+
+    The handler only checks and queues the swap on `World::GetMessager()`. That runs in
+    `World::Update` before the sessions update, while no map and no async packet is processed.
+    The world task checks again and swaps.
+  - `.party status`: one line per group member, in chat and in `Server.log`, as
+    `[PartyStatus] <name> guid= account= session=client|bot mover= ai= leader= dist=
+    group_leader= hp= combat= victim= victim_hp= pending_moves= spline_ack= pos=`.
+  - `.party lead`: makes the client's character the group leader.
+    - Why it's needed: a swap moves the lead, and the group keeps it across a restart. A party bot
+      loaded into a group it leads removes itself, which is how Partyone left the group in the
+      third M1b run.
+    - The launcher sends it after entering the world, before `.partybot load`.
+- **The swap, in order** (`PlayerBotMgr::SwapPartyControl`):
+  1. Releases A's loot and cancels its trade, while A's client still hears it.
+  2. `WorldSession::TakeOverClient`, under the socket's new session lock:
+     - **To B's session:** the socket, address, latency, build, OS, platform, locale, session key
+       and sniff file. B's session takes B's account name, global account data and tutorials from
+       the database, since a bot session has none.
+     - **To A's session:** `m_bot`.
+     - **Cleared:** both receive queues and both client movers.
+     - **Warden:** moved when it is on (it is off here).
+  3. Both sessions' anticheat state is reset (`InitCheatData`). A's broadcaster loses the socket and
+     B's gets it.
+  4. A's pending movement changes are applied (`ResolvePendingMovementChanges`), its spline-done
+     flag cleared, and it is stopped.
+  5. The bot entry is re-keyed to A (guid, account, name). A gets a new `PartyBotAI`:
+     - leader B, the old AI's CC and focus marks;
+     - `m_initialized` set, so it does not teleport or refill A;
+     - role, then spell data for A's class;
+     - GM mode off, as a bot loaded from the database gets.
+
+     The old AI is destroyed, which detaches it from B.
+  6. B's MotionMaster (the AI's follow or chase) is cleared and B stopped. Its spline-done flag is
+     cleared, so the client's first moves are not held for an ack.
+  7. Every party bot following A follows B, and B takes the group's lead (`Group::ChangeLeader`).
+  8. `SMSG_PARTY_SWAP`, destroys for A's item objects, then the burst (§2.1).
+  9. One log line: who has the client, who runs the AI, the wait in the queue and the swap's time.
+- **Socket safety** (`WorldSocket`): `m_Session` is guarded by a mutex wherever the network thread
+  routes a packet to it or sets its latency, and wherever the world thread finalizes or changes
+  it.
+  - `ChangeSession` moves the sessions' state under that lock, so no packet reaches A's queue
+    after the swap clears it.
+  - Until the client claims B, its movement is dropped quietly: `GetConfirmedMover()` is null
+    with no client mover, and 1.12 movement carries no guid.
+- **Checked** (2026-10-29, unattended, `PARTY_SWAP_TEST=1`, `crates/party/src/server/party/swap_test.rs`):
+  - **Method:**
+    - benilla does not understand the swap yet, so every check reads the server:
+      `[PartySwap]`/`[PartyStatus]` lines and the characters database.
+    - 12 swaps per run: a follow, 5 idle swaps (two rounds), and two fights with two swaps each.
+      Per fight, the first swap takes the client off a character not in combat. The second takes
+      it off a character fighting at that moment.
+  - **Result:** 43 findings ok, 0 FAIL, no server error (`Server.log`, `mangosd.out`,
+    `Anticheat.log`, `gm_critical.log`). The 12 swaps are repeated across the last five runs.
+  - **After every swap:**
+    - the client is on the new character's session (`session=client`), which leads the group;
+    - every other member runs PartyBotAI under it;
+    - the old character has no client mover and no pending movement change, so nothing waits
+      on its acks.
+  - **Follow:** the played character jumped 25 yd, then was swapped away. As a bot it came back
+    to the new leader: 15.6 → 5.2 yd in 6 s, and 23.3 → 2.4 yd in another run.
+  - **Fights:**
+    - Kobold Vermin with 200 HP, `.partybot attackstart`.
+    - The swapped-away characters fought on as bots, polled about every 0.6 s:
+      - the damage dealers took it as their victim 0.2–2.0 s after their swap;
+      - the priest (a healer, no victim) was in combat, healing, about 4 s after.
+    - The creature died at 25.7 s and 29.3 s.
+    - In one earlier run, the client's own warrior stood unplayed and never turned to the
+      creature, and the fight outlasted the check. So a fight passes on the creature's health
+      falling after the second swap, as well as on its death.
+  - **Kept:** XP (174 → 213/214 from the two kills), items, level and each character's account
+    (`characters.account` unchanged).
+  - **Time:**
+    - The server's swap takes 0–1 ms.
+    - The command waits about 50 ms in the queue (one world tick).
+    - From the client sending the command to the `done` line: 152–176 ms. That includes the
+      frame that sends it and the test's 20 ms log polling.
+  - **Not checked here (M1c):**
+    - what the client shows;
+    - the client claiming B;
+    - the client's movement after a swap;
+    - the UI.
 
 **M1a — Our own vmangos build.** Done.
 
