@@ -5180,7 +5180,6 @@ dependencies = [
  "benilla-buildstamp",
  "benilla-formats",
  "bevy",
- "serde_json",
  "sha2",
  "windows-sys 0.59.0",
 ]

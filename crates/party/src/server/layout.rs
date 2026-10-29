@@ -14,6 +14,11 @@ impl Layout {
         Self { root }
     }
 
+    /// The `party-server` folder itself.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Archives as downloaded, kept so a re-run of setup does not fetch them again.
     pub fn downloads(&self) -> PathBuf {
         self.root.join("downloads")

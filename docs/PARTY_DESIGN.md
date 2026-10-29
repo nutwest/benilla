@@ -393,15 +393,15 @@ The game starts and stops its own server. The player never runs or configures an
     (`rtsc`, formations). But its Windows build ships no map extractors. benilla is also built and
     verified against vmangos, whose `file:line` citations run through the code. So the altbot
     check does not favour cMaNGOS. Revisit at M6 if PartyBotAI's orders prove too thin.
-- **What is bundled.** Nothing is committed. First-run setup downloads everything into
-  `benilla-config/party-server/` (gitignored):
-  - MariaDB 11.4.5 (winx64 zip).
-  - vmangos's latest Windows build (`dev-windows-amd64-<sha>.zip`, which includes the extractors).
-  - Its database snapshot (`db_latest`).
-  - Its `mangosd`/`realmd` `.conf.dist` at the build's commit.
-
-  Archives are cached, so a re-run does not download again. Rolling releases are resolved through
-  the GitHub API, and what was installed is recorded.
+- **What is bundled.** Nothing is committed. Everything lands in `benilla-config/party-server/`
+  (gitignored):
+  - Downloaded, pinned by SHA-256: MariaDB 11.4.5 (winx64 zip) and vmangos's database snapshot
+    (`db-4641790.zip`). Archives are cached, so a re-run does not download again.
+  - Our own vmangos build (since M1a), copied from the checkout beside benilla: mangosd, realmd,
+    the extractors, the two DLLs the checkout vendors, the `.conf.dist` templates, the navmesh
+    inputs, and the SQL migrations. It is re-copied whenever the build changes.
+  - What was installed is recorded in `state/installed.txt`.
+  - Until M1a, the server was vmangos's prebuilt `dev-windows-amd64-9b7fb4d.zip`.
 - **Processes.** MariaDB, realmd and mangosd are started hidden (`CREATE_NO_WINDOW`) inside a
   Windows job object that kills them if the game dies. All three bind 127.0.0.1 only, on private
   ports: 13306 (DB), 13724 (realmd) and 18085 (world). mangosd's console is a stdin pipe, used to
@@ -460,13 +460,7 @@ The game starts and stops its own server. The player never runs or configures an
 
 Steps:
 
-1. **Build vmangos from source at the pinned commit.**
-   - Clone `vmangos/core` at `9b7fb4d` into `party-server/src` and build with VS 2022. The
-     CMake bundled with VS, or a portable CMake, plus the dependencies vmangos's Windows docs
-     name.
-   - Check that it reproduces the release binary's behaviour, then switch the launcher's pinned
-     build to our own (`crates/party` setup; the archive pin becomes a local build).
-   - Risk: the dependency setup. Do this first.
+1. **M1a: build vmangos from source.** Done; see the next section.
 2. **Server: `.party swap <name>`**, admin-only, the target a party bot of ours in our group.
    - The chat handler only validates and queues a world task.
    - The task runs at `World::Update`'s single-threaded point and performs §2.1's handover:
@@ -503,6 +497,83 @@ Steps:
   before and after) and no server error.
 - Each swap is under 1 s, measured from F6 to the UI being up.
 - Screenshots are taken before and after a swap.
+
+**M1a — Our own vmangos build.** Done.
+
+- **Source.** The fork [nutwest/core](https://github.com/nutwest/core), branch `party`, made from
+  `9b7fb4dfdb1d863ef93c5cf24d57aff92124f41f` (2026-10-28, "Replace new with make_shared in auth
+  socket").
+  - That is exactly the commit of the prebuilt `dev-windows-amd64-9b7fb4d.zip` used through M1;
+    mangosd reports `Core revision: 9b7fb4dfdb1d863ef93c`.
+  - The swap work (M1 steps 2–6) lands on that branch.
+- **Prerequisites** (Windows 10 or 11, x64):
+  - **Visual Studio 2022** (Community is enough) with the "Desktop development with C++"
+    workload: MSVC v143 and a Windows 10/11 SDK. Built with MSVC 14.44.35207 and SDK
+    10.0.26100.0.
+  - **CMake 3.31.6, portable:**
+    - Download `cmake-3.31.6-windows-x86_64.zip` from
+      `https://github.com/Kitware/CMake/releases/tag/v3.31.6`, SHA-256
+      `d163cd3ab4959b0a53fa8988f2ddbd2e6c501658201e6a154386bad9dbe4f836`.
+    - Unzip it anywhere; it needs no install or admin rights.
+    - VS's own CMake component works too.
+    - Avoid CMake 4.x: it drops compatibility with the old `cmake_minimum_required` lines in the
+      vendored libraries.
+  - **Git.**
+  - **Nothing else.** The MySQL client, OpenSSL and zlib ship in the repo under `dep/windows`,
+    cpptrace and the other libraries build from the repo, and the build fetches nothing.
+- **Steps**, from the folder that holds the benilla checkout (here `F:\Game Prototype`), in Git
+  Bash:
+
+  ```bash
+  git clone -b party https://github.com/nutwest/core vmangos
+  cd vmangos && mkdir build && cd build
+  <cmake>/bin/cmake.exe .. -DBUILD_EXTRACTORS=1 -DBUILD_WARNINGS_AS_ERROR=1 -G "Visual Studio 17 2022" -A x64
+  "/c/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/MSBuild.exe" MaNGOS.sln //p:Platform=x64 //p:Configuration=Release //m
+  ```
+
+  - These are the flags of vmangos's own release workflow
+    (`.github/workflows/development-release.yaml`, `build-windows`).
+  - The output is `vmangos/bin/Release/`: `mangosd.exe`, `realmd.exe`, `MapExtractor.exe`,
+    `VMapExtractor.exe`, `VMapAssembler.exe` and `MoveMapGenerator.exe`.
+  - A full build takes about 75 s on 16 threads. The only warnings are three D9025 flag overrides
+    in the vendored libmpq and g3dlite.
+  - Rebuilding after a change is the same MSBuild line.
+- **How the game uses it** (`crates/party`, `setup::server_build`):
+  - **Where the build is found:** `PARTY_VMANGOS`, else the `vmangos` folder beside the benilla
+    checkout.
+  - **What is copied, on every launch whose build changed** (size and mtime of the files), into
+    `party-server/vmangos/`:
+    - everything in `bin/Release`;
+    - `dep/windows/lib/x64_release/libmySQL.dll` and `libeay32.dll` (the release archive adds the
+      same two; CMake copies them only on `install`);
+    - the `.conf.dist.in` templates;
+    - `contrib/mmap/offmesh.txt` and `config.json`.
+
+    A rebuilt mangosd is therefore picked up by the next launch.
+  - **Migrations** come from the checkout's `sql/migrations`. The setup no longer reads GitHub's
+    API or raw files.
+  - **Unchanged:** the database snapshot and MariaDB downloads, and the config overrides.
+  - **No build found:** the launcher stops with an error naming this section.
+- **Checked** (2026-10-29, debug client, unattended runs over the M1 install):
+  - The first launch copied the build. The client logged straight into the world as Partythree,
+    and both party bots loaded.
+  - The server logs match the prebuilt's:
+    - `Server.log`'s one ERROR (`Gameobject 148500`) comes from the database snapshot and was
+      there before.
+    - `Anticheat.log` holds only the startup lines.
+    - `gm_critical.log` and `Scripts.log` are empty.
+  - Shutdown is clean (mangosd 0.7 s, total 1.0 s).
+  - Warm start, launch to in-world:
+
+    | Build | Time | Breakdown |
+    |---|---|---|
+    | Prebuilt | 6.0–6.9 s | servers 2.4–2.7 s |
+    | Ours, warm | 6.1 s, 6.1 s | database 1.0, servers 2.4 |
+    | Ours, first launch after the copy | 15.4 s | servers 5.0 s, then a 7 s loading screen |
+
+    The first launch after the copy was slow, as the prebuilt's first launch was (15.9 s, servers
+    5.0 s). A freshly written exe being scanned is the likely cause; not investigated.
+  - **Not run:** a cold first-run setup with this build's extractors on a fresh state folder.
 
 **M2 — Party bar.**
 - Party frames with health. Clicking a member swaps to it.

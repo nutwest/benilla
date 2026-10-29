@@ -26,59 +26,6 @@ fn curl() -> Command {
     cmd
 }
 
-/// The body at `url`, as text.
-pub fn text(url: &str) -> anyhow::Result<String> {
-    let out = curl()
-        .arg(url)
-        .stdin(Stdio::null())
-        .output()
-        .context("running curl.exe")?;
-    if !out.status.success() {
-        bail!(
-            "fetching {url}: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(String::from_utf8(out.stdout)?)
-}
-
-fn json(url: &str) -> anyhow::Result<serde_json::Value> {
-    serde_json::from_str(&text(url)?).with_context(|| format!("reading {url}"))
-}
-
-/// The names of the files in directory `path` of `repo` at commit `sha`, walked down the trees,
-/// since the contents API stops at a thousand entries.
-pub fn list_dir(repo: &str, sha: &str, path: &str) -> anyhow::Result<Vec<String>> {
-    let mut tree = sha.to_string();
-    for part in path.split('/') {
-        let listing = json(&format!(
-            "https://api.github.com/repos/{repo}/git/trees/{tree}"
-        ))?;
-        tree = listing["tree"]
-            .as_array()
-            .and_then(|t| t.iter().find(|e| e["path"] == part))
-            .and_then(|e| e["sha"].as_str())
-            .with_context(|| format!("{path} not in {repo}@{sha}"))?
-            .to_string();
-    }
-    let listing = json(&format!(
-        "https://api.github.com/repos/{repo}/git/trees/{tree}"
-    ))?;
-    Ok(listing["tree"]
-        .as_array()
-        .context("not a directory")?
-        .iter()
-        .filter_map(|e| e["path"].as_str().map(str::to_string))
-        .collect())
-}
-
-/// A raw file of `repo` at `sha`.
-pub fn raw(repo: &str, sha: &str, path: &str) -> anyhow::Result<String> {
-    text(&format!(
-        "https://raw.githubusercontent.com/{repo}/{sha}/{path}"
-    ))
-}
-
 /// Downloads `asset` to `dest`, reporting the fraction done while it runs. A file already at
 /// `dest` is kept: downloads land under a `.part` name and are renamed only when complete.
 pub fn download(
@@ -123,7 +70,6 @@ pub fn download(
     std::fs::rename(&part, dest)?;
     Ok(())
 }
-
 
 /// Unpacks a zip into `dir` with `tar.exe`.
 pub fn unzip(zip: &Path, dir: &Path) -> anyhow::Result<()> {

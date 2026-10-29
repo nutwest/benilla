@@ -18,7 +18,6 @@ use super::layout::{forward, Layout};
 use super::procs::{self, BELOW_NORMAL};
 use super::{Phase, Supervisor, DB_PORT, REALMD_PORT, REALM_NAME, WORLD_PORT};
 
-const VMANGOS: &str = "vmangos/core";
 const MARIADB_VERSION: &str = "11.4.5";
 /// The client build the extracted DBCs are filed under (`DataDir/5875/dbc`).
 const CLIENT_BUILD: u32 = 5875;
@@ -136,9 +135,10 @@ fn step(
 /// The steps that need no database running.
 pub fn files(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
     layout.make_dirs()?;
-    step(sup, layout, "fetch", "Downloading the server", || {
+    step(sup, layout, "fetch", "Downloading the database", || {
         fetch_all(sup, layout)
     })?;
+    server_build(sup, layout)?;
     let data_dir = benilla_formats::wow_data()
         .context("no WoW 1.12.1 install found; set WOW_DATA to its Data folder")?;
     let wow_root = data_dir.parent().context("the Data folder has no parent")?;
@@ -155,21 +155,14 @@ pub fn files(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The server build this game is made against: an exact vmangos commit, its Windows build and
-/// database snapshot, and an exact MariaDB, each archive checked against its SHA-256.
-const VMANGOS_SHA: &str = "9b7fb4dfdb1d863ef93c5cf24d57aff92124f41f";
-const PINNED: [Pinned; 3] = [
+/// The archives this game is made against: an exact MariaDB and the vmangos database snapshot,
+/// each checked against its SHA-256. The server itself is our own build ([`server_build`]).
+const PINNED: [Pinned; 2] = [
     Pinned {
         name: "mariadb-11.4.5-winx64.zip",
         url: "https://archive.mariadb.org/mariadb-11.4.5/winx64-packages/mariadb-11.4.5-winx64.zip",
         size: 90_835_771,
         sha256: "b7c11d38657f16b837e68199d73670510aadb78f42dfa5d5fdea31a7aab342e3",
-    },
-    Pinned {
-        name: "dev-windows-amd64-9b7fb4d.zip",
-        url: "https://github.com/vmangos/core/releases/download/latest/dev-windows-amd64-9b7fb4d.zip",
-        size: 5_805_146,
-        sha256: "f287c9f4ca426b13480c59a4109ba8e45f27c35b56c52f1f6e6f59dd153a0351",
     },
     Pinned {
         name: "db-4641790.zip",
@@ -188,8 +181,7 @@ struct Pinned {
 }
 
 fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
-    let [mariadb, build, dump] = PINNED;
-    let sha = VMANGOS_SHA.to_string();
+    let [mariadb, dump] = PINNED;
     let assets = PINNED.map(|p| Asset {
         url: p.url.to_string(),
         name: p.name.to_string(),
@@ -203,7 +195,10 @@ fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
         let dest = layout.downloads().join(&asset.name);
         sup.progress(format!("{} ({} MB)", asset.name, size / 1_000_000), None);
         if dest.exists() && fetch::sha256(&dest)? != pin.sha256 {
-            warn!("party: {} does not match its checksum; fetching it again", asset.name);
+            warn!(
+                "party: {} does not match its checksum; fetching it again",
+                asset.name
+            );
             std::fs::remove_file(&dest)?;
         }
         fetch::download(asset, &dest, &sup.cancel, |f| {
@@ -237,21 +232,94 @@ fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
         &unpack.join(mariadb.name.trim_end_matches(".zip")),
         &layout.mariadb(),
     )?;
-    fetch::unzip(&layout.downloads().join(build.name), &unpack)?;
-    replace_dir(&unpack.join("Release"), &layout.vmangos())?;
     fetch::unzip(&layout.downloads().join(dump.name), &unpack)?;
     replace_dir(&unpack.join("mysql-dump"), &layout.sql())?;
     let _ = std::fs::remove_dir_all(&unpack);
+    info!(
+        "party: installed MariaDB {MARIADB_VERSION} with {}",
+        dump.name
+    );
+    Ok(())
+}
 
-    sup.progress("Fetching the server's settings", None);
-    for (path, dest) in [
+/// The vmangos checkout the server is built from (`PARTY_VMANGOS`, else `vmangos` beside the
+/// benilla checkout), built as `docs/PARTY_DESIGN.md`, M1a, says.
+fn vmangos_source(layout: &Layout) -> anyhow::Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("PARTY_VMANGOS").filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(dir));
+    }
+    // `<parent>/benilla/benilla-config/party-server` → `<parent>/vmangos`.
+    let parent = layout
+        .root()
+        .ancestors()
+        .nth(3)
+        .context("no folder beside the benilla checkout; set PARTY_VMANGOS")?;
+    Ok(parent.join("vmangos"))
+}
+
+/// Installs our vmangos build into `vmangos/` when it changed since the last launch: the
+/// binaries of the checkout's `bin/Release`, the MySQL client and OpenSSL DLLs the checkout
+/// vendors (the release archive adds the same two), its config templates, and the navmesh
+/// generator's inputs. Runs on every launch, so a rebuild is picked up by the next one.
+fn server_build(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
+    let source = vmangos_source(layout)?;
+    let bin = source.join("bin").join("Release");
+    let dlls = source.join("dep/windows/lib/x64_release");
+    let mut files: Vec<(PathBuf, std::fs::Metadata)> = std::fs::read_dir(&bin)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .chain(["libmySQL.dll", "libeay32.dll"].map(|dll| dlls.join(dll)))
+        .filter_map(|path| Some((path.clone(), std::fs::metadata(&path).ok()?)))
+        .filter(|(_, meta)| meta.is_file())
+        .collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+    for exe in ["mangosd.exe", "realmd.exe", "libmySQL.dll"] {
+        if !files
+            .iter()
+            .any(|(p, _)| p.file_name() == Some(exe.as_ref()))
+        {
+            bail!(
+                "the vmangos checkout at {} has no built {exe}; build it as \
+                 docs/PARTY_DESIGN.md (M1a) says, or set PARTY_VMANGOS to the checkout",
+                source.display()
+            );
+        }
+    }
+    let stamp: String = files
+        .iter()
+        .map(|(path, meta)| {
+            let modified = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            format!("{} {} {modified}\n", path.display(), meta.len())
+        })
+        .collect();
+    let stamp_file = layout.state().join("build-stamp.txt");
+    if std::fs::read_to_string(&stamp_file).is_ok_and(|s| s == stamp) {
+        return Ok(());
+    }
+    sup.set(Phase::Setup, "Installing the server build");
+    let start = Instant::now();
+    let dest = layout.vmangos();
+    let _ = std::fs::remove_dir_all(&dest);
+    std::fs::create_dir_all(&dest)?;
+    for (path, _) in &files {
+        let name = path.file_name().context("a file without a name")?;
+        std::fs::copy(path, dest.join(name))
+            .with_context(|| format!("copying {}", path.display()))?;
+    }
+    for (path, to) in [
         (
             "src/mangosd/mangosd.conf.dist.in",
-            layout.vmangos().join("mangosd.conf.dist"),
+            dest.join("mangosd.conf.dist"),
         ),
         (
             "src/realmd/realmd.conf.dist.in",
-            layout.vmangos().join("realmd.conf.dist"),
+            dest.join("realmd.conf.dist"),
         ),
         (
             "contrib/mmap/offmesh.txt",
@@ -262,15 +330,31 @@ fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
             layout.data().join("config.json"),
         ),
     ] {
-        std::fs::write(dest, fetch::raw(VMANGOS, &sha, path)?)?;
+        std::fs::copy(source.join(path), &to)
+            .with_context(|| format!("copying {} from the vmangos checkout", path))?;
     }
-    let mut installed = HashMap::new();
-    installed.insert("vmangos_build".to_string(), build.name.to_string());
-    installed.insert("vmangos_sha".to_string(), sha);
-    installed.insert("vmangos_db".to_string(), dump.name.to_string());
-    installed.insert("mariadb".to_string(), MARIADB_VERSION.to_string());
-    write_kv(&layout.state().join("installed.txt"), &installed)?;
-    info!("party: installed vmangos {} with {}", build.name, dump.name);
+    let commit = Command::new("git")
+        .arg("-C")
+        .arg(&source)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let installed_file = layout.state().join("installed.txt");
+    let mut installed = read_kv(&installed_file);
+    installed.remove("vmangos_build");
+    installed.remove("vmangos_sha");
+    installed.insert("vmangos_source".to_string(), forward(&source));
+    installed.insert("vmangos_commit".to_string(), commit.clone());
+    write_kv(&installed_file, &installed)?;
+    std::fs::write(&stamp_file, stamp)?;
+    info!(
+        "party: installed the vmangos build of {} ({commit}) in {:.1}s",
+        source.display(),
+        start.elapsed().as_secs_f32()
+    );
     Ok(())
 }
 
@@ -525,12 +609,12 @@ fn import(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> anyh
 /// Applies the build's migrations the snapshot lacks, each `sql/migrations/<id>_<db>.sql` whose id
 /// is not in that database's `migrations` table; mangosd refuses to start while one is missing.
 fn migrate(sup: &Supervisor, layout: &Layout, db: &Db) -> anyhow::Result<()> {
-    let installed = read_kv(&layout.state().join("installed.txt"));
-    let sha = installed
-        .get("vmangos_sha")
-        .context("installed.txt lacks the build's commit")?;
+    let dir = vmangos_source(layout)?.join("sql").join("migrations");
     sup.progress("Comparing with the server build", None);
-    let names = fetch::list_dir(VMANGOS, sha, "sql/migrations")?;
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .collect();
     let target = |suffix: &str| match suffix {
         "world" => Some("mangos"),
         "logon" => Some("realmd"),
@@ -557,10 +641,7 @@ fn migrate(sup: &Supervisor, layout: &Layout, db: &Db) -> anyhow::Result<()> {
             format!("migration {id}"),
             Some(i as f32 / missing.len() as f32),
         );
-        let body = fetch::raw(VMANGOS, sha, &format!("sql/migrations/{file}"))?;
-        let tmp = layout.state().join("migration.sql");
-        std::fs::write(&tmp, body)?;
-        db.import(database, &tmp)?;
+        db.import(database, &dir.join(file))?;
     }
     info!("party: {} migrations applied", missing.len());
     Ok(())
@@ -625,10 +706,7 @@ fn account(sup: &Supervisor, db: &Db, name: &str, pass: &str) -> anyhow::Result<
 }
 
 /// Polls `done` until it holds, for at most 20 s.
-pub fn wait_for(
-    mut done: impl FnMut() -> anyhow::Result<bool>,
-    what: &str,
-) -> anyhow::Result<()> {
+pub fn wait_for(mut done: impl FnMut() -> anyhow::Result<bool>, what: &str) -> anyhow::Result<()> {
     let start = Instant::now();
     while !done()? {
         if start.elapsed() > Duration::from_secs(20) {

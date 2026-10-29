@@ -84,7 +84,9 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
     sup.set(Phase::Ready, "Entering the world");
     sup.cover.store(true, Ordering::Relaxed);
     sup.ask(SessionRequest::Relog(members[active].login()));
-    wait(sup, "enter the world", || Ok(sup.in_world.load(Ordering::Relaxed)))?;
+    wait(sup, "enter the world", || {
+        Ok(sup.in_world.load(Ordering::Relaxed))
+    })?;
     load_bots(sup, db, &members, active)?;
     record_played(layout, members[active].name);
     sup.cover.store(false, Ordering::Relaxed);
@@ -158,7 +160,10 @@ fn load_bots(sup: &Supervisor, db: &Db, members: &[Member], active: usize) -> an
         })
     })?;
     for m in &others {
-        sup.ask(SessionRequest::Command(format!(".partybot load {}", m.name)));
+        sup.ask(SessionRequest::Command(format!(
+            ".partybot load {}",
+            m.name
+        )));
     }
     wait(sup, "load the party bots", || {
         others.iter().try_fold(true, |all, m| {
@@ -217,7 +222,9 @@ fn switch(
 
     // 3. In as the new one.
     let step = Instant::now();
-    wait(sup, "enter the world", || Ok(sup.in_world.load(Ordering::Relaxed)))?;
+    wait(sup, "enter the world", || {
+        Ok(sup.in_world.load(Ordering::Relaxed))
+    })?;
     t.login_to_world = step.elapsed();
     info!("party: {} in the world", new.name);
     record_played(layout, new.name);
@@ -239,7 +246,10 @@ fn switch(
     t.others_released = step.elapsed();
     let step = Instant::now();
     for m in &others {
-        sup.ask(SessionRequest::Command(format!(".partybot load {}", m.name)));
+        sup.ask(SessionRequest::Command(format!(
+            ".partybot load {}",
+            m.name
+        )));
     }
     wait(sup, "load the party bots", || {
         others.iter().try_fold(true, |all, m| {
@@ -371,7 +381,10 @@ fn checks(
             })
             .collect()
     };
-    report(format!("follow: moved 25 yd; bots at {:?} yd", spread(sup, at)));
+    report(format!(
+        "follow: moved 25 yd; bots at {:?} yd",
+        spread(sup, at)
+    ));
     settle(Duration::from_secs(10));
     let after = spread(sup, at);
     report(format!(
