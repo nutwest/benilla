@@ -1,6 +1,6 @@
-//! A level as data: the map, the arena, the enemy path and the waves, read from a RON file at
-//! boot (`levels/goldshire.ron`, or `$TD_LEVEL`). Positions in the file are WoW world coords; the
-//! [`EnemyPath`] holds them in Bevy space, flat, for the movers to ground themselves.
+//! A level as data: the map, the arena, the pathing grid's bounds, spawns, exit and roads, and
+//! the waves, read from a RON file at boot (`levels/goldshire.ron`, or `$TD_LEVEL`). Positions in
+//! the file and here are WoW world coords `(x, y)`; the grid works in the same frame.
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -14,8 +14,30 @@ struct LevelFile {
     map_id: u32,
     arena_center: (f32, f32, f32),
     lives: u32,
-    path: Vec<(f32, f32)>,
+    bounds: Bounds,
+    slope_limit: f32,
+    spawns: Vec<(f32, f32)>,
+    exit: Exit,
+    roads: Vec<RoadFile>,
     waves: Vec<WaveDef>,
+}
+
+#[derive(Deserialize)]
+struct Bounds {
+    min: (f32, f32),
+    max: (f32, f32),
+}
+
+#[derive(Deserialize)]
+struct Exit {
+    center: (f32, f32),
+    radius: f32,
+}
+
+#[derive(Deserialize)]
+struct RoadFile {
+    width: f32,
+    points: Vec<(f32, f32)>,
 }
 
 /// One wave: `count` of one creature display, `interval` seconds apart, starting `delay`
@@ -31,6 +53,12 @@ pub struct WaveDef {
     pub delay: f32,
 }
 
+/// A road corridor: a polyline in WoW `(x, y)` and its full width in yards.
+pub struct Road {
+    pub width: f32,
+    pub points: Vec<Vec2>,
+}
+
 #[derive(Resource)]
 pub struct Level {
     pub name: String,
@@ -38,7 +66,14 @@ pub struct Level {
     /// WoW coords; `z` is a guess until the terrain answers.
     pub center: [f32; 3],
     pub lives: u32,
-    pub path: EnemyPath,
+    /// The grid rectangle, WoW `(x, y)`.
+    pub bounds_min: Vec2,
+    pub bounds_max: Vec2,
+    pub slope_limit: f32,
+    pub spawns: Vec<Vec2>,
+    pub exit_center: Vec2,
+    pub exit_radius: f32,
+    pub roads: Vec<Road>,
     pub waves: Vec<WaveDef>,
 }
 
@@ -49,57 +84,6 @@ impl Level {
     }
 }
 
-/// A polyline on the ground plane (Bevy space, `y = 0`), walked by arc length.
-pub struct EnemyPath {
-    points: Vec<Vec3>,
-    /// Arc length at each point; `cumulative[0] = 0`.
-    cumulative: Vec<f32>,
-}
-
-impl EnemyPath {
-    fn new(points: Vec<Vec3>) -> Self {
-        let mut cumulative = Vec::with_capacity(points.len());
-        let mut total = 0.0;
-        for (i, p) in points.iter().enumerate() {
-            if i > 0 {
-                total += p.distance(points[i - 1]);
-            }
-            cumulative.push(total);
-        }
-        Self { points, cumulative }
-    }
-
-    pub fn points(&self) -> &[Vec3] {
-        &self.points
-    }
-
-    pub fn length(&self) -> f32 {
-        self.cumulative.last().copied().unwrap_or(0.0)
-    }
-
-    /// The flat point `along` yards down the path, clamped to its ends.
-    pub fn point_at(&self, along: f32) -> Vec3 {
-        let along = along.clamp(0.0, self.length());
-        let i = self
-            .cumulative
-            .partition_point(|&c| c <= along)
-            .clamp(1, self.points.len() - 1);
-        let (a, b) = (self.points[i - 1], self.points[i]);
-        let span = self.cumulative[i] - self.cumulative[i - 1];
-        let t = if span > 0.0 {
-            (along - self.cumulative[i - 1]) / span
-        } else {
-            0.0
-        };
-        a.lerp(b, t)
-    }
-
-    /// The direction of the first segment, for a spawn's facing.
-    pub fn start_direction(&self) -> Vec3 {
-        (self.points[1] - self.points[0]).normalize_or(Vec3::NEG_Z)
-    }
-}
-
 /// Reads the level named by `$TD_LEVEL`, else the crate's Goldshire level.
 pub fn load() -> Result<Level, String> {
     let path = std::env::var("TD_LEVEL").unwrap_or_else(|_| {
@@ -107,32 +91,52 @@ pub fn load() -> Result<Level, String> {
     });
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
     let file: LevelFile = ron::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
-    if file.path.len() < 2 {
-        return Err(format!("{path}: the path needs at least two waypoints"));
+    let v = |(x, y): (f32, f32)| Vec2::new(x, y);
+    let (min, max) = (v(file.bounds.min), v(file.bounds.max));
+    if min.x >= max.x || min.y >= max.y {
+        return Err(format!("{path}: bounds min must be below max on both axes"));
+    }
+    let inside = |p: Vec2| p.cmpge(min).all() && p.cmplt(max).all();
+    if file.spawns.is_empty() || !file.spawns.iter().all(|&s| inside(v(s))) {
+        return Err(format!("{path}: needs at least one spawn, all inside the bounds"));
+    }
+    if !inside(v(file.exit.center)) {
+        return Err(format!("{path}: the exit is outside the bounds"));
     }
     if file.waves.is_empty() {
         return Err(format!("{path}: no waves"));
     }
-    let points: Vec<Vec3> = file
-        .path
-        .iter()
-        .map(|&(x, y)| wow_to_bevy([x, y, 0.0]))
-        .collect();
     let (cx, cy, cz) = file.arena_center;
     let level = Level {
         name: file.name,
         map_id: file.map_id,
         center: [cx, cy, cz],
         lives: file.lives,
-        path: EnemyPath::new(points),
+        bounds_min: min,
+        bounds_max: max,
+        slope_limit: file.slope_limit,
+        spawns: file.spawns.into_iter().map(v).collect(),
+        exit_center: v(file.exit.center),
+        exit_radius: file.exit.radius,
+        roads: file
+            .roads
+            .into_iter()
+            .map(|r| Road {
+                width: r.width,
+                points: r.points.into_iter().map(v).collect(),
+            })
+            .collect(),
         waves: file.waves,
     };
+    let size = max - min;
     info!(
-        "level: {} from {path} — map {}, path {:.0} yd over {} waypoints, {} waves",
+        "level: {} from {path} — map {}, grid {:.0}×{:.0} yd, {} spawn(s), {} road(s), {} waves",
         level.name,
         level.map_id,
-        level.path.length(),
-        level.path.points.len(),
+        size.x,
+        size.y,
+        level.spawns.len(),
+        level.roads.len(),
         level.waves.len()
     );
     Ok(level)

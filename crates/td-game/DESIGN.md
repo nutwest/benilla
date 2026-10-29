@@ -12,9 +12,9 @@ engine can and cannot give it, and sets the milestones from M3 on.
 The player defends an exit against waves that come down the roads. They do it with two things that
 cost two different currencies:
 
-- **Units** (Gold): footmen, archers and the like, placed on the field with a behaviour the player
+- **Units** (Gold, Food): footmen, archers and the like, placed on the field with a behaviour the player
   sets. Units fight, can be knocked out, and recover.
-- **Structures** (Lumber): walls, barricades and towers. They do not fight. They reshape where
+- **Structures** (Lumber, Stone): walls, barricades and towers. They do not fight. They reshape where
   enemies can walk, and a tower lifts a garrisoned unit out of melee reach.
 
 Enemies path over a grid flow field towards the exit. The roads are the cheapest ground, so a level

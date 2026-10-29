@@ -1,13 +1,16 @@
-//! The wave runner: once every wave's creature can spawn and the path's start has ground, it
-//! spawns each wave's enemies at the path start, `interval` apart, then waits the next wave's
-//! `delay`. It stops spawning when the lives run out.
+//! The wave runner: once the flow field is built and every wave's creature can spawn, it spawns
+//! each wave's enemies at the level's spawns in turn, `interval` apart, then waits the next
+//! wave's `delay`. It stops spawning when the lives run out.
 
 use bevy::prelude::*;
 
+use benilla_assets::coords::wow_to_bevy;
 use benilla_world::world_point::TerrainHeights;
 
 use crate::creature::CreatureSpawner;
 use crate::enemy::{Enemy, EnemyMove};
+use crate::flow::Flow;
+use crate::grid::Grid;
 use crate::level::Level;
 use crate::shot::ShotMoments;
 
@@ -41,18 +44,17 @@ fn run_waves(
     level: Res<Level>,
     lives: Res<Lives>,
     heights: TerrainHeights,
+    grid: Res<Grid>,
+    flow: Res<Flow>,
     mut runner: ResMut<WaveRunner>,
     mut spawner: CreatureSpawner,
     mut moments: ResMut<ShotMoments>,
     enemies: Query<&Enemy>,
 ) {
-    if lives.0 == 0 || runner.finished {
+    // Nothing walks before the field does.
+    if lives.0 == 0 || runner.finished || !flow.ready() {
         return;
     }
-    let start = level.path.points()[0];
-    let Some(ground) = heights.under(start) else {
-        return;
-    };
     if !runner.started {
         // Every display up front, so no wave stalls on a model mid-game.
         let mut all = true;
@@ -83,13 +85,23 @@ fn run_waves(
     if runner.timer > 0.0 {
         return;
     }
-    let at = Vec3::new(start.x, ground, start.z);
-    let Some(entity) = spawner.spawn(wave.display_id, at, level.path.start_direction()) else {
+    // Spawns take turns; each enemy faces down the field from its spawn cell.
+    let spawn = level.spawns[runner.spawned as usize % level.spawns.len()];
+    let Some(ground) = heights.under(wow_to_bevy([spawn.x, spawn.y, 0.0])) else {
+        return;
+    };
+    let facing = grid
+        .cell_at(spawn)
+        .map(|i| flow.direction(i))
+        .filter(|d| *d != Vec2::ZERO)
+        .unwrap_or_else(|| (level.exit_center - spawn).normalize_or(Vec2::X));
+    let at = wow_to_bevy([spawn.x, spawn.y, ground]);
+    let facing = wow_to_bevy([facing.x, facing.y, 0.0]);
+    let Some(entity) = spawner.spawn(wave.display_id, at, facing) else {
         return;
     };
     spawner.commands().entity(entity).insert(Enemy {
         wave: runner.index,
-        along: 0.0,
         speed: wave.speed,
         health: wave.health,
     });

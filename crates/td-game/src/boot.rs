@@ -85,6 +85,9 @@ pub fn run(build: BuildId) -> AppExit {
         crate::anim::plugin,
         crate::enemy::plugin,
         crate::waves::plugin,
+        crate::grid::plugin,
+        crate::flow::plugin,
+        crate::test_block::plugin,
         crate::debug_draw::plugin,
     ));
 
