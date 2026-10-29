@@ -28,16 +28,16 @@
     ],
     // Gold and Food pay for units, Lumber and Stone for structures.
     economy: (
-        start: (gold: 100, food: 20, lumber: 150, stone: 120),
+        start: (gold: 200, food: 20, lumber: 150, stone: 120),
         per_wave: (food: 5, lumber: 40, stone: 20),
         lumber_per_sec: 1.0,
     ),
     waves: [
         // Kobolds at a walk.
-        (display_id: 26, count: 8, interval: 2.5, speed: 2.5, health: 60.0, delay: 0.0),
+        (display_id: 26, count: 8, interval: 2.5, speed: 2.5, health: 60.0, delay: 0.0, bounty: 5.0),
         // Wolves at a run, catching up with the tail of the kobolds.
-        (display_id: 165, count: 6, interval: 1.5, speed: 7.0, health: 45.0, delay: 4.0),
+        (display_id: 165, count: 6, interval: 1.5, speed: 7.0, health: 45.0, delay: 4.0, bounty: 4.0),
         // Kobolds again, at a run.
-        (display_id: 26, count: 10, interval: 1.2, speed: 4.5, health: 80.0, delay: 8.0),
+        (display_id: 26, count: 10, interval: 1.2, speed: 4.5, health: 80.0, delay: 8.0, bounty: 6.0),
     ],
 )

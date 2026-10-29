@@ -54,6 +54,9 @@ pub struct WaveDef {
     pub speed: f32,
     pub health: f32,
     pub delay: f32,
+    /// Gold per kill.
+    #[serde(default)]
+    pub bounty: f32,
 }
 
 /// A road corridor: a polyline in WoW `(x, y)` and its full width in yards.

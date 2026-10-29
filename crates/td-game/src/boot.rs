@@ -77,6 +77,15 @@ pub fn run(build: BuildId) -> AppExit {
         commands.insert_resource(CurrentMap(map_id));
     });
     app.insert_resource(level);
+    match crate::units::load() {
+        Ok(units) => {
+            app.insert_resource(units);
+        }
+        Err(e) => {
+            error!("units: {e}");
+            return AppExit::error();
+        }
+    }
 
     app.add_plugins((
         crate::camera::plugin,
@@ -92,6 +101,8 @@ pub fn run(build: BuildId) -> AppExit {
         crate::economy::plugin,
         crate::structures::plugin,
         crate::build::plugin,
+        crate::units::plugin,
+        crate::combat::plugin,
     ));
 
     // After `AssetPlugin`: the loaders go into the live `AssetServer`, as in the viewer.

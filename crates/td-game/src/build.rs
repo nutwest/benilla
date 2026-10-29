@@ -43,9 +43,9 @@ const NUMBER_KEYS: [KeyCode; 6] = [
 ];
 
 #[derive(Resource, Default)]
-struct BuildMode {
+pub struct BuildMode {
     /// The structure being placed, if in build mode.
-    def: Option<usize>,
+    pub def: Option<usize>,
     yaw: f32,
     /// The ghost's root and the def it shows.
     ghost: Option<(Entity, usize)>,
@@ -87,11 +87,13 @@ fn keys(
     keys: Res<ButtonInput<KeyCode>>,
     defs: Option<Res<crate::structures::StructureDefs>>,
     mut mode: ResMut<BuildMode>,
+    mut recruit: ResMut<crate::units::UnitMode>,
 ) {
     let Some(defs) = defs else { return };
     for (i, key) in NUMBER_KEYS.iter().enumerate() {
         if keys.just_pressed(*key) && i < defs.defs.len() {
             mode.def = Some(i);
+            recruit.def = None;
             mode.pinned = None;
             info!("build: {} — click to build, R to turn, Esc to stop", defs.defs[i].name);
         }

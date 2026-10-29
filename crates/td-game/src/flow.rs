@@ -36,6 +36,13 @@ impl Flow {
         self.generation > 0
     }
 
+    /// The cost still to walk to the exit from a WoW `(x, y)`; infinite off the field.
+    pub fn remaining(&self, grid: &Grid, wow: Vec2) -> f32 {
+        grid.cell_at(wow)
+            .and_then(|i| self.integration.get(i).copied())
+            .unwrap_or(f32::INFINITY)
+    }
+
     /// The step from cell `i`, if it has one.
     pub fn step(&self, i: usize) -> Option<usize> {
         let k = self.dir.get(i).copied().filter(|&k| k != NONE)?;

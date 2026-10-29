@@ -135,6 +135,7 @@ fn run_waves(
         wave: runner.index,
         speed: wave.speed,
         health: wave.health,
+        bounty: wave.bounty,
     });
     if runner.spawned == 0 {
         info!(

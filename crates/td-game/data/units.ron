@@ -1,0 +1,43 @@
+// Units the player recruits, in key order (7, 8, ...). `display_id` is a CreatureDisplayInfo row:
+// single-skin creature stand-ins until humanoid rendering lands (DESIGN.md §3). Costs are in Gold
+// and Food. `attack_interval` is seconds between attacks; `attack_anims` are AnimationData ids
+// tried in order (16 AttackUnarmed, 17 Attack1H, 46 AttackBow, 53 SpellCastDirected).
+(
+    units: [
+        (
+            id: "footman",
+            name: "Footman",
+            // A Mosshide gnoll.
+            display_id: 355,
+            cost: (gold: 25, food: 2),
+            health: 120.0,
+            damage: 18.0,
+            attack_range: 1.8,
+            attack_interval: 1.2,
+            move_speed: 4.5,
+            attack: Melee,
+            attack_anims: [17, 16],
+            behaviour: Guard,
+            priority: Nearest,
+            guard_radius: 8.0,
+        ),
+        (
+            id: "archer",
+            name: "Archer",
+            // A Bloodscalp scout troll; its directed cast reads as a throw. (The green and forest
+            // troll displays name skins this data does not ship.)
+            display_id: 1110,
+            cost: (gold: 30, food: 2),
+            health: 70.0,
+            damage: 14.0,
+            attack_range: 18.0,
+            attack_interval: 1.5,
+            move_speed: 4.0,
+            attack: Ranged(projectile_speed: 22.0),
+            attack_anims: [46, 53, 17],
+            behaviour: Hold,
+            priority: First,
+            guard_radius: 8.0,
+        ),
+    ],
+)

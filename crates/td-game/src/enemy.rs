@@ -27,6 +27,8 @@ pub struct Enemy {
     /// Ground speed in yards per second.
     pub speed: f32,
     pub health: f32,
+    /// Gold granted when it dies.
+    pub bounty: f32,
 }
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
