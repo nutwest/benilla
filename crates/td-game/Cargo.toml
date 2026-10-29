@@ -1,0 +1,17 @@
+[package]
+name = "td-game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A single-player tower defense on the benilla-world engine, with no server, login or FrameXML UI"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The engine and its asset layer only, never `benilla-app`. `benilla-assets` and `-formats` come in
+# without default features, as in `benilla-world`, which forwards `dev` itself.
+benilla-assets = { path = "../benilla-assets", default-features = false }
+benilla-formats = { path = "../benilla-formats", default-features = false }
+benilla-world = { path = "../benilla-world" }
+bevy.workspace = true
