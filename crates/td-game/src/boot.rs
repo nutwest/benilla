@@ -68,7 +68,12 @@ pub fn run(build: BuildId) -> AppExit {
     app.insert_resource(benilla_world::schedule::WorldLive(true))
         .insert_resource(ViewFocus::entry(MAP_ID, ARENA_CENTER));
 
-    app.add_plugins((crate::camera::plugin, crate::shot::plugin));
+    app.add_plugins((
+        crate::camera::plugin,
+        crate::shot::plugin,
+        crate::creature::plugin,
+        crate::anim::plugin,
+    ));
 
     // After `AssetPlugin`: the loaders go into the live `AssetServer`, as in the viewer.
     benilla_assets::register_asset_loaders(&mut app);

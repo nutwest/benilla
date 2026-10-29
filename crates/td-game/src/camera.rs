@@ -23,7 +23,7 @@ const ARENA_RADIUS: f32 = 200.0;
 /// The boom length's range, in yards, and where it opens.
 const DISTANCE_MIN: f32 = 20.0;
 const DISTANCE_MAX: f32 = 160.0;
-const DISTANCE_START: f32 = 90.0;
+const DISTANCE_START: f32 = 40.0;
 
 /// Pan speed in boom lengths per second, so a zoomed-out pan covers more ground.
 const PAN_RATE: f32 = 0.9;
