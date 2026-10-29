@@ -6364,6 +6364,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "td-game"
+version = "0.2.0"
+dependencies = [
+ "benilla-assets",
+ "benilla-formats",
+ "benilla-world",
+ "bevy",
+]
+
+[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
