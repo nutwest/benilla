@@ -38,6 +38,7 @@ pub(super) fn build(app: &mut App) {
         .insert_resource(crate::run_mode::EnvPin::process().clone())
         .add_message::<GlueLogin>()
         .add_message::<LoginGuardRefused>()
+        .add_message::<AutoLogin>()
         .add_systems(
             Update,
             // Every state: the reconnect resubmit fires while `InWorld`, and the roster edge
@@ -65,6 +66,24 @@ enum IoPark {
     /// Past logon: at select or in the world.
     Active,
 }
+
+/// A crate on top of benilla logs in without the login screen when it chooses: the env fast path's
+/// silent attempt (no dialog, paced resubmits after a transport failure) with credentials it
+/// supplies, and `character` entered from the first roster as `WOW_CHAR` is. The account guard
+/// does not apply: it guards credentials taken from the environment.
+#[derive(Message, Debug, Clone)]
+pub struct AutoLogin {
+    pub user: String,
+    pub pass: String,
+    pub character: Option<String>,
+}
+
+/// The [`AutoLogin`]s since a system's last run; none where the message is not registered, as in
+/// a harness built without this plugin.
+pub(crate) type AutoLogins<'w, 's> = (
+    Option<Res<'w, bevy::ecs::message::Messages<AutoLogin>>>,
+    Local<'s, bevy::ecs::message::MessageCursor<AutoLogin>>,
+);
 
 /// The credential policy's memory: the session's credentials, the in-flight and park state, and
 /// the resubmit timer.
@@ -226,8 +245,18 @@ pub(crate) fn drive_policy(
     mut disconnects: MessageReader<DisconnectedMessage>,
     mut refusals: MessageWriter<LoginGuardRefused>,
     mut exit: MessageWriter<AppExit>,
+    auto: AutoLogins,
 ) {
     let now = time.elapsed_secs();
+
+    let (messages, mut cursor) = auto;
+    if let Some(messages) = messages.as_deref() {
+        for AutoLogin { user, pass, .. } in cursor.read(messages) {
+            info!("login: auto-login requested as {user}");
+            attempt.intent.creds = Some((user.clone(), pass.clone()));
+            attempt.intent.retry_at = Some(now);
+        }
+    }
 
     // The env fast path, once: `WOW_USER` and `WOW_PASS` both set auto-submit. There is no
     // default account. A driverless run exits non-zero ("login: FATAL") on a failure no resubmit

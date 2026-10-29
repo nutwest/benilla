@@ -209,6 +209,8 @@ pub use benilla_world::worldview::run as run_worldview;
 pub use bevy::app::AppExit;
 // A crate on top of benilla reads objects and interacts through these, with no protocol dependency.
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
+/// A crate on top logs in without the login screen ([`run_with`]).
+pub use glue_session::login::AutoLogin;
 pub use net::Objects;
 pub use target::Interact;
 

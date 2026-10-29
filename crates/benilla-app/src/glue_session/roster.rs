@@ -192,7 +192,18 @@ pub(super) fn apply_roster_policy(
     // Present only when a rig drives the run and picks its own character.
     rig: Option<Res<crate::run_mode::RigCharacter>>,
     mut exit: MessageWriter<AppExit>,
+    auto: super::login::AutoLogins,
 ) {
+    let (messages, mut cursor) = auto;
+    if let Some(messages) = messages.as_deref() {
+        for login in cursor.read(messages) {
+            if let Some(name) = &login.character {
+                // Read below as `WOW_CHAR` is, after the environment's one-shot read.
+                roster.env_read = true;
+                roster.env_char = Some(name.clone());
+            }
+        }
+    }
     if !roster.env_read {
         roster.env_read = true;
         // `WOW_RIG` outranks `WOW_CHAR`: the rig may have to create its character first, which

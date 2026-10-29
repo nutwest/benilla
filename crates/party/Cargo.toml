@@ -1,0 +1,40 @@
+[package]
+name = "party"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Single-player benilla: a party of your own characters on an embedded vmangos server, started and stopped by the game"
+
+[lints]
+workspace = true
+
+[features]
+# The dev/player seam, as the `benilla` launcher's: `--no-default-features` is the player build.
+default = ["dev"]
+dev = ["benilla-app/dev"]
+
+[dependencies]
+anyhow = { workspace = true }
+# `default-features = false`, or `--no-default-features` here still builds benilla-app with `dev`.
+benilla-app = { path = "../benilla-app", default-features = false }
+benilla-formats = { path = "../benilla-formats", default-features = false }
+bevy = { workspace = true }
+serde_json = "1.0.150"
+
+# The job object that takes the server down with the game, and the image path a stale PID is
+# checked against.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[build-dependencies]
+benilla-buildstamp = { path = "../benilla-buildstamp" }
+
+[[bin]]
+name = "party"
+path = "src/main.rs"
+test = false

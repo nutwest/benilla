@@ -5172,6 +5172,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "947f833aaa585cf12b8ec7c0476c98784c49f33b861376ffc84ed92adebf2aba"
 
 [[package]]
+name = "party"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "benilla-app",
+ "benilla-buildstamp",
+ "benilla-formats",
+ "bevy",
+ "serde_json",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
