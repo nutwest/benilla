@@ -25,23 +25,32 @@ const CLIENT_BUILD: u32 = 5875;
 /// The account's GM level: `.partybot` needs `SEC_ADMINISTRATOR`.
 const GM_LEVEL: u32 = 6;
 
-/// The passwords this install made for itself, and the local account's name.
+/// How many local accounts the party has: one per character, since `.partybot load` needs the
+/// bot's account offline.
+pub const PARTY_SIZE: usize = 3;
+
+/// The passwords this install made for itself, and the party's local accounts.
 pub struct Secrets {
     pub root_pass: String,
     pub mangos_pass: String,
-    pub account: String,
-    pub account_pass: String,
+    /// `(account, password)`, one per party member.
+    pub accounts: Vec<(String, String)>,
 }
 
 impl Secrets {
     pub fn load_or_create(layout: &Layout) -> anyhow::Result<Self> {
         let path = layout.state().join("secrets.txt");
         let mut kv = read_kv(&path);
-        if kv.is_empty() {
-            kv.insert("root".into(), random_word(16));
-            kv.insert("mangos".into(), random_word(16));
-            kv.insert("account".into(), "PARTY".into());
-            kv.insert("account_pass".into(), random_word(12));
+        let before = kv.len();
+        kv.entry("root".into()).or_insert_with(|| random_word(16));
+        kv.entry("mangos".into()).or_insert_with(|| random_word(16));
+        for i in 0..PARTY_SIZE {
+            let (key, name) = account_key(i);
+            kv.entry(key.clone()).or_insert(name);
+            kv.entry(format!("{key}_pass"))
+                .or_insert_with(|| random_word(12));
+        }
+        if kv.len() != before {
             write_kv(&path, &kv)?;
         }
         let get = |k: &str| {
@@ -49,12 +58,26 @@ impl Secrets {
                 .cloned()
                 .with_context(|| format!("secrets.txt lacks {k}"))
         };
+        let accounts = (0..PARTY_SIZE)
+            .map(|i| {
+                let (key, _) = account_key(i);
+                Ok((get(&key)?, get(&format!("{key}_pass"))?))
+            })
+            .collect::<anyhow::Result<_>>()?;
         Ok(Self {
             root_pass: get("root")?,
             mangos_pass: get("mangos")?,
-            account: get("account")?,
-            account_pass: get("account_pass")?,
+            accounts,
         })
+    }
+}
+
+/// The secrets key and account name of party member `i`: `account`/`PARTY`, then
+/// `account2`/`PARTY2`, and so on.
+fn account_key(i: usize) -> (String, String) {
+    match i {
+        0 => ("account".into(), "PARTY".into()),
+        _ => (format!("account{}", i + 1), format!("PARTY{}", i + 1)),
     }
 }
 
@@ -132,61 +155,91 @@ pub fn files(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
-    sup.progress("Finding the latest server build", None);
-    let mariadb_name = format!("mariadb-{MARIADB_VERSION}-winx64.zip");
-    let mariadb_url = format!(
-        "https://archive.mariadb.org/mariadb-{MARIADB_VERSION}/winx64-packages/{mariadb_name}"
-    );
-    let mariadb = Asset {
-        size: fetch::content_length(&mariadb_url),
-        url: mariadb_url,
-        name: mariadb_name,
-    };
-    let build = fetch::release_asset(VMANGOS, "latest", |n| {
-        n.starts_with("dev-windows-amd64-") && n.ends_with(".zip")
-    })?;
-    let dump = fetch::release_asset(VMANGOS, "db_latest", |n| {
-        n.starts_with("db-") && !n.starts_with("db-sqlite") && n.ends_with(".zip")
-    })?;
-    let short = build
-        .name
-        .trim_start_matches("dev-windows-amd64-")
-        .trim_end_matches(".zip");
-    let sha = fetch::commit_sha(VMANGOS, short)?;
+/// The server build this game is made against: an exact vmangos commit, its Windows build and
+/// database snapshot, and an exact MariaDB, each archive checked against its SHA-256.
+const VMANGOS_SHA: &str = "9b7fb4dfdb1d863ef93c5cf24d57aff92124f41f";
+const PINNED: [Pinned; 3] = [
+    Pinned {
+        name: "mariadb-11.4.5-winx64.zip",
+        url: "https://archive.mariadb.org/mariadb-11.4.5/winx64-packages/mariadb-11.4.5-winx64.zip",
+        size: 90_835_771,
+        sha256: "b7c11d38657f16b837e68199d73670510aadb78f42dfa5d5fdea31a7aab342e3",
+    },
+    Pinned {
+        name: "dev-windows-amd64-9b7fb4d.zip",
+        url: "https://github.com/vmangos/core/releases/download/latest/dev-windows-amd64-9b7fb4d.zip",
+        size: 5_805_146,
+        sha256: "f287c9f4ca426b13480c59a4109ba8e45f27c35b56c52f1f6e6f59dd153a0351",
+    },
+    Pinned {
+        name: "db-4641790.zip",
+        url: "https://github.com/vmangos/core/releases/download/db_latest/db-4641790.zip",
+        size: 30_511_447,
+        sha256: "9e178f1d70363e92a7b8c259000102dc9739333d79ca00c99ea32dd1fb43e904",
+    },
+];
 
-    let assets = [&mariadb, &build, &dump];
+/// One archive of the pinned server.
+struct Pinned {
+    name: &'static str,
+    url: &'static str,
+    size: u64,
+    sha256: &'static str,
+}
+
+fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
+    let [mariadb, build, dump] = PINNED;
+    let sha = VMANGOS_SHA.to_string();
+    let assets = PINNED.map(|p| Asset {
+        url: p.url.to_string(),
+        name: p.name.to_string(),
+        size: Some(p.size),
+    });
+    let assets = assets.iter().collect::<Vec<_>>();
     let total: u64 = assets.iter().map(|a| a.size.unwrap_or(1)).sum();
     let mut before = 0u64;
-    for asset in assets {
+    for (asset, pin) in assets.iter().zip(&PINNED) {
         let size = asset.size.unwrap_or(1);
+        let dest = layout.downloads().join(&asset.name);
         sup.progress(format!("{} ({} MB)", asset.name, size / 1_000_000), None);
-        fetch::download(
-            asset,
-            &layout.downloads().join(&asset.name),
-            &sup.cancel,
-            |f| {
-                let done = before as f32 + f * size as f32;
-                sup.progress(
-                    format!("{} ({} MB)", asset.name, size / 1_000_000),
-                    Some(done / total as f32),
-                );
-            },
-        )?;
+        if dest.exists() && fetch::sha256(&dest)? != pin.sha256 {
+            warn!("party: {} does not match its checksum; fetching it again", asset.name);
+            std::fs::remove_file(&dest)?;
+        }
+        fetch::download(asset, &dest, &sup.cancel, |f| {
+            let done = before as f32 + f * size as f32;
+            sup.progress(
+                format!("{} ({} MB)", asset.name, size / 1_000_000),
+                Some(done / total as f32),
+            );
+        })
+        .with_context(|| {
+            format!(
+                "{} could not be downloaded; vmangos replaces its rolling builds, so place \
+                 that exact file in {} and start again",
+                asset.name,
+                layout.downloads().display()
+            )
+        })?;
+        let got = fetch::sha256(&dest)?;
+        if got != pin.sha256 {
+            std::fs::remove_file(&dest)?;
+            bail!("{} has SHA-256 {got}, expected {}", asset.name, pin.sha256);
+        }
         before += size;
     }
 
     sup.progress("Unpacking", None);
     let unpack = layout.state().join("unpack");
     let _ = std::fs::remove_dir_all(&unpack);
-    fetch::unzip(&layout.downloads().join(&mariadb.name), &unpack)?;
+    fetch::unzip(&layout.downloads().join(mariadb.name), &unpack)?;
     replace_dir(
         &unpack.join(mariadb.name.trim_end_matches(".zip")),
         &layout.mariadb(),
     )?;
-    fetch::unzip(&layout.downloads().join(&build.name), &unpack)?;
+    fetch::unzip(&layout.downloads().join(build.name), &unpack)?;
     replace_dir(&unpack.join("Release"), &layout.vmangos())?;
-    fetch::unzip(&layout.downloads().join(&dump.name), &unpack)?;
+    fetch::unzip(&layout.downloads().join(dump.name), &unpack)?;
     replace_dir(&unpack.join("mysql-dump"), &layout.sql())?;
     let _ = std::fs::remove_dir_all(&unpack);
 
@@ -212,9 +265,9 @@ fn fetch_all(sup: &Supervisor, layout: &Layout) -> anyhow::Result<()> {
         std::fs::write(dest, fetch::raw(VMANGOS, &sha, path)?)?;
     }
     let mut installed = HashMap::new();
-    installed.insert("vmangos_build".to_string(), build.name.clone());
+    installed.insert("vmangos_build".to_string(), build.name.to_string());
     installed.insert("vmangos_sha".to_string(), sha);
-    installed.insert("vmangos_db".to_string(), dump.name.clone());
+    installed.insert("vmangos_db".to_string(), dump.name.to_string());
     installed.insert("mariadb".to_string(), MARIADB_VERSION.to_string());
     write_kv(&layout.state().join("installed.txt"), &installed)?;
     info!("party: installed vmangos {} with {}", build.name, dump.name);
@@ -513,18 +566,32 @@ fn migrate(sup: &Supervisor, layout: &Layout, db: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The local account, created on mangosd's console and given the GM level `.partybot` needs.
-pub fn account(
+/// The party's local accounts, each created on mangosd's console and given the GM level
+/// `.partybot` needs.
+pub fn accounts(
     sup: &Supervisor,
     layout: &Layout,
     db: &Db,
     secrets: &Secrets,
 ) -> anyhow::Result<()> {
-    if layout.marker("account").exists() {
-        return Ok(());
+    for (i, (name, pass)) in secrets.accounts.iter().enumerate() {
+        // The first account's marker predates the party.
+        let marker = if i == 0 {
+            "account".to_string()
+        } else {
+            format!("account-{name}")
+        };
+        if !layout.marker(&marker).exists() {
+            account(sup, db, name, pass)?;
+            layout.mark(&marker)?;
+        }
     }
-    sup.set(Phase::Setup, "Creating your account");
-    let name = sql_word(&secrets.account);
+    Ok(())
+}
+
+fn account(sup: &Supervisor, db: &Db, name: &str, pass: &str) -> anyhow::Result<()> {
+    sup.set(Phase::Setup, &format!("Creating account {name}"));
+    let name = sql_word(name);
     let console = |line: String| -> anyhow::Result<()> {
         let mut running = sup.running.lock().unwrap();
         running
@@ -546,7 +613,7 @@ pub fn account(
     };
     // The account is written asynchronously, so its level is set only once its row exists.
     if exists()?.is_none() {
-        console(format!("account create {name} {}", secrets.account_pass))?;
+        console(format!("account create {name} {pass}"))?;
         wait_for(|| Ok(exists()?.is_some()), "create the account")?;
     }
     console(format!("account set gmlevel {name} {GM_LEVEL}"))?;
@@ -554,12 +621,14 @@ pub fn account(
         || Ok(level()?.as_deref() == Some(&GM_LEVEL.to_string())),
         "set the account's GM level",
     )?;
-    layout.mark("account")?;
     Ok(())
 }
 
 /// Polls `done` until it holds, for at most 20 s.
-fn wait_for(mut done: impl FnMut() -> anyhow::Result<bool>, what: &str) -> anyhow::Result<()> {
+pub fn wait_for(
+    mut done: impl FnMut() -> anyhow::Result<bool>,
+    what: &str,
+) -> anyhow::Result<()> {
     let start = Instant::now();
     while !done()? {
         if start.elapsed() > Duration::from_secs(20) {

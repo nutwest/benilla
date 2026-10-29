@@ -94,14 +94,15 @@ impl Db {
         Ok(())
     }
 
-    /// The account's most recently played character.
-    pub fn last_character(&self, account: &str) -> anyhow::Result<Option<String>> {
+    /// Of `names`, the character played most recently.
+    pub fn last_played(&self, names: &[&str]) -> anyhow::Result<Option<String>> {
+        let list: Vec<String> = names.iter().map(|n| format!("'{}'", sql_word(n))).collect();
         let rows = self.query(
-            None,
+            Some("characters"),
             &format!(
-                "SELECT c.name FROM characters.characters c JOIN realmd.account a ON a.id = c.account \
-                 WHERE a.username = '{}' ORDER BY c.logout_time DESC, c.guid DESC LIMIT 1",
-                sql_word(account)
+                "SELECT name FROM characters WHERE name IN ({}) \
+                 ORDER BY logout_time DESC, guid DESC LIMIT 1",
+                list.join(",")
             ),
         )?;
         Ok(rows
@@ -110,6 +111,55 @@ impl Db {
             .map(str::to_string)
             .filter(|s| !s.is_empty()))
     }
+
+    /// A character's saved row: what the server last wrote of it.
+    pub fn character(&self, name: &str) -> anyhow::Result<Option<CharRow>> {
+        let rows = self.query(
+            Some("characters"),
+            &format!(
+                "SELECT c.guid, c.online, c.level, c.xp, c.money, c.map, c.position_x, \
+                 c.position_y, c.position_z, \
+                 (SELECT COUNT(*) FROM character_inventory i WHERE i.guid = c.guid) \
+                 FROM characters c WHERE c.name = '{}'",
+                sql_word(name)
+            ),
+        )?;
+        let Some(line) = rows.lines().next() else {
+            return Ok(None);
+        };
+        let f: Vec<&str> = line.split('\t').collect();
+        let num = |i: usize| -> anyhow::Result<f64> {
+            f.get(i)
+                .context("short row")?
+                .parse()
+                .with_context(|| format!("field {i} of {name}'s row"))
+        };
+        Ok(Some(CharRow {
+            guid: num(0)? as u64,
+            online: num(1)? != 0.0,
+            level: num(2)? as u32,
+            xp: num(3)? as u32,
+            money: num(4)? as u32,
+            map: num(5)? as u32,
+            pos: [num(6)? as f32, num(7)? as f32, num(8)? as f32],
+            items: num(9)? as u32,
+        }))
+    }
+}
+
+/// A character as the database holds it.
+#[derive(Clone, Debug)]
+pub struct CharRow {
+    pub guid: u64,
+    pub online: bool,
+    pub level: u32,
+    pub xp: u32,
+    pub money: u32,
+    pub map: u32,
+    /// WoW coordinates.
+    pub pos: [f32; 3],
+    /// Rows in `character_inventory`: equipped, bagged and banked items.
+    pub items: u32,
 }
 
 /// `s` kept to the characters an account or password of ours uses, so it can sit in a quoted

@@ -1,5 +1,5 @@
 //! Downloads through Windows' own `curl.exe` and unpacking through its `tar.exe`, so the game
-//! carries no HTTP or archive stack. Releases are resolved through the GitHub API.
+//! carries no HTTP or archive stack. Archives are pinned by SHA-256 ([`sha256`]).
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -44,36 +44,6 @@ pub fn text(url: &str) -> anyhow::Result<String> {
 
 fn json(url: &str) -> anyhow::Result<serde_json::Value> {
     serde_json::from_str(&text(url)?).with_context(|| format!("reading {url}"))
-}
-
-/// The asset of release `tag` of `repo` whose name `pick` accepts.
-pub fn release_asset(repo: &str, tag: &str, pick: impl Fn(&str) -> bool) -> anyhow::Result<Asset> {
-    let release = json(&format!(
-        "https://api.github.com/repos/{repo}/releases/tags/{tag}"
-    ))?;
-    let assets = release["assets"]
-        .as_array()
-        .context("release has no assets")?;
-    assets
-        .iter()
-        .find_map(|a| {
-            let name = a["name"].as_str()?;
-            let url = a["browser_download_url"].as_str()?;
-            pick(name).then(|| Asset {
-                url: url.to_string(),
-                name: name.to_string(),
-                size: a["size"].as_u64(),
-            })
-        })
-        .with_context(|| format!("no matching asset in {repo} release {tag}"))
-}
-
-/// The full sha of a commit named by a short one.
-pub fn commit_sha(repo: &str, short: &str) -> anyhow::Result<String> {
-    let commit = json(&format!(
-        "https://api.github.com/repos/{repo}/commits/{short}"
-    ))?;
-    Ok(commit["sha"].as_str().context("no sha")?.to_string())
 }
 
 /// The names of the files in directory `path` of `repo` at commit `sha`, walked down the trees,
@@ -154,24 +124,6 @@ pub fn download(
     Ok(())
 }
 
-/// The size `url` states, following redirects.
-pub fn content_length(url: &str) -> Option<u64> {
-    let out = curl()
-        .args(["-I", url])
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            k.eq_ignore_ascii_case("content-length")
-                .then(|| v.trim().parse().ok())
-                .flatten()
-        })
-        // The final response's, after any redirects.
-        .next_back()
-}
 
 /// Unpacks a zip into `dir` with `tar.exe`.
 pub fn unzip(zip: &Path, dir: &Path) -> anyhow::Result<()> {
@@ -188,4 +140,18 @@ pub fn unzip(zip: &Path, dir: &Path) -> anyhow::Result<()> {
         bail!("unpacking {} failed ({status})", zip.display());
     }
     Ok(())
+}
+
+/// The SHA-256 of `path`, lowercase hex.
+pub fn sha256(path: &Path) -> anyhow::Result<String> {
+    use sha2::Digest as _;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let mut hasher = sha2::Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
 }

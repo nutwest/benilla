@@ -50,6 +50,11 @@ pub(crate) struct Roster {
     env_read: bool,
     /// The last race whose intro eye was looked up for a new character's entry, with what it found.
     entry_eye: Option<(u8, Option<[f32; 3]>)>,
+    /// An [`super::login::AutoLogin`]'s character, entered from the first roster of a world
+    /// session newer than `epoch`: the logged-out session's own roster can still be in flight.
+    auto_char: Option<(String, u64)>,
+    /// The newest world session a roster came from.
+    last_epoch: u64,
 }
 
 impl Roster {
@@ -198,9 +203,9 @@ pub(super) fn apply_roster_policy(
     if let Some(messages) = messages.as_deref() {
         for login in cursor.read(messages) {
             if let Some(name) = &login.character {
-                // Read below as `WOW_CHAR` is, after the environment's one-shot read.
                 roster.env_read = true;
-                roster.env_char = Some(name.clone());
+                roster.env_char = None;
+                roster.auto_char = Some((name.clone(), roster.last_epoch));
             }
         }
     }
@@ -221,6 +226,16 @@ pub(super) fn apply_roster_policy(
     for msg in msgs.read() {
         roster.chars = msg.characters.clone();
         roster.realm = msg.realm.clone();
+        roster.last_epoch = roster.last_epoch.max(msg.epoch);
+        // The auto-login's character, once a roster of a session after it arrives; read below
+        // as `WOW_CHAR` is.
+        if roster
+            .auto_char
+            .as_ref()
+            .is_some_and(|(_, after)| msg.epoch > *after)
+        {
+            roster.env_char = roster.auto_char.take().map(|(name, _)| name);
+        }
         // `WOW_CHARSELECT_PICK=<name>` selects that row and stays on the screen, through the
         // screen's own selection once it holds this roster.
         if let Ok(name) = std::env::var("WOW_CHARSELECT_PICK") {

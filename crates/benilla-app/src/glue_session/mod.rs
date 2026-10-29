@@ -8,6 +8,7 @@ pub(crate) mod queue;
 pub(crate) mod realm;
 pub(crate) mod realm_smoke;
 mod reconnect;
+pub(crate) mod requests;
 pub(crate) mod roster;
 mod roundtrip;
 
@@ -22,6 +23,14 @@ impl Plugin for GlueSessionPlugin {
         login::build(app);
         app.init_resource::<roster::Roster>()
             .init_resource::<roster::RunPick>()
+            .init_resource::<requests::Relog>()
+            .add_message::<requests::SessionRequest>()
+            .add_systems(
+                Update,
+                requests::drive_requests
+                    .before(login::LoginPolicy)
+                    .after(benilla_world::schedule::WorldStage::Net),
+            )
             .add_systems(
                 Update,
                 edges::session_edges()

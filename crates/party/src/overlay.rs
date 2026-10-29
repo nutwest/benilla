@@ -99,7 +99,6 @@ type TextOf<'w, 's, T, O> =
 
 fn update(
     server: Res<Server>,
-    objects: benilla_app::Objects,
     mut cover: NodeOf<Cover, Bar, BarFill>,
     mut step: TextOf<StepText, DetailText>,
     mut detail: TextOf<DetailText, StepText>,
@@ -107,7 +106,7 @@ fn update(
     mut fill: NodeOf<BarFill, Cover, Bar>,
 ) {
     let status = server.0.status();
-    let show = covering(&status, objects.player().is_some(), &server);
+    let show = covering(&status, &server);
     for mut node in &mut cover {
         let display = if show { Display::Flex } else { Display::None };
         if node.display != display {

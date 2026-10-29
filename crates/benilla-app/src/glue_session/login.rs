@@ -199,6 +199,9 @@ pub(crate) fn answer_glue(
                     if let Some(pick) = pick.as_deref() {
                         let _ = pick.0.send(crate::net::CharRequest::Abandon);
                     }
+                    // Back reparks the IO thread pre-logon (`Parked::Repark`), where a silent
+                    // attempt may be sent; a typed one is sent regardless.
+                    attempt.intent.park = IoPark::AtLogin;
                     commands.set_state(ClientState::Login);
                 }
             }

@@ -172,25 +172,179 @@ Not portable: the grid, the flow field, waves, the economy, structures, enemy AI
   with `PartyBotAI` and `.partybot …` commands). Those bots follow, fight and heal in a group with
   server AI, as real `Player` objects. The client streams them as ordinary players, so the shared
   world renders with no client change.
-  - *To verify in M1:* whether a bot can be loaded from an *existing named character* of yours.
-    The stock commands create or clone bots. If they can't, the patch is a small server command,
-    `.party load <name>`.
-- **Switching is a session swap.**
-  1. The client logs out of A and the server hands A to a bot.
-  2. The server removes B's bot and the client logs into B.
-  3. The client then receives B's own full login stream: private fields, spells, action bars,
-     talents and quests.
-
-  Requirement 3 holds by construction, because the active character is a genuine login with the
-  stock UI.
-  - The PoC (M1) uses benilla's existing logout→enter path, skipping the glue screens.
-  - A later milestone (M3) makes it seamless. The server rebinds the session in place and the
-    client re-enters without a glue round trip or a loading screen when the map is unchanged.
+  - Verified in M0: `.partybot load <name>` loads an existing character, on its own account.
+- **Switching is an in-world session swap (§2.1).** Every party member is always in the world:
+  you play one, and the others are party bots. A server command hands your client connection
+  from your character to a bot's character, and gives your old character the bot's AI. Both stay
+  in the world. The server then sends the owner-only data of the new character, with no logout,
+  no teleport and no loading screen. benilla moves its player identity to the unit it already
+  mirrors and rebinds the UI.
+  - The relog switch was built and measured, then rejected. It took about 3 s to switch, plus a
+    3.1–3.3 s loading screen, so about 6.3 s visible.
+  - Breakdown: removing the target's bot 0.8–1.0 s, logout 0.2–0.35 s, login and Enter World
+    1.2–1.3 s, the old leader's bots dropping 0.16 s, re-loading the bots 0.4–0.6 s.
+  - The loading screen dominated: the world is torn down at logout and streamed again, on the same
+    map. Next came the login handshake and the bot round trips.
+  - The session swap removes all of these.
 - **Pause is server plus client.** A vmangos `.pause` patch (§1.3) is paired with a pausable world
   clock and an input freeze in benilla (E2). The RTS camera runs on real time during the pause.
   Orders issued while paused are queued and run on resume.
 - **Client code lives in a new crate, `crates/party`,** launched through `benilla_app::run_with`
   ("Building on top", CONTRIBUTING). Settings live under `benilla_app::config_dir()`.
+
+### 2.1 The session swap
+
+Read from vmangos at the pinned commit (`9b7fb4d`) and benilla-app.
+
+**What a bot is in vmangos.**
+- A party bot is a real `Player` with its own `WorldSession`, created by `PlayerBotMgr::AddBot` as
+  `new WorldSession(accountId, nullptr, …)`. That session has no socket and a `m_bot` entry, a
+  `PlayerBotEntry` holding the `PartyBotAI`.
+- It is logged in through the ordinary `WorldSession::LoginPlayer`. Packets sent to it go nowhere.
+  `PlayerBotAI::UpdateAI` answers its teleport acks itself.
+- The AI is attached by `PlayerBotMgr::OnPlayerInWorld`, which calls `player->SetAI` and
+  `ai->SetPlayer`.
+- `PartyBotAI` follows `m_leaderGuid`. It removes itself (`requestRemoval`) when it finds no
+  leader, or when it has become the group leader itself.
+
+**What belongs to the session, and what to the Player.**
+
+| Session (`WorldSession`) | Player |
+|---|---|
+| The account: id, security, username, `m_accountData`, tutorials | Descriptor fields, inventory and items |
+| The socket, session key and receive queues | Spells and auras |
+| Warden | Quests, skills, reputation, honor |
+| `m_cheatData` (`MovementAnticheat`) | Group membership |
+| `m_clientMoverGuid` | Map and visibility set (`m_visibleGUIDs`) |
+| `m_bot` | Packet broadcaster (`m_broadcaster`) |
+| `MasterPlayer`: action buttons, friends and ignore lists, mail | |
+
+`Player::SaveToDB` writes `account = GetSession()->GetAccountId()`.
+
+**So the swap moves the connection, not the sessions.**
+- Swapping `Player::m_session` between A and B would let the next save move B onto A's account.
+  It would also give B A's action bars and friends list.
+- Instead, each Player keeps its own session, and the swap moves two things between sessions:
+  - the client's **socket**, from A's session to B's;
+  - the **bot role** (`m_bot` and the AI), from B's session to A's.
+- B's session becomes a client session, with its own account, action bars and social data. A's
+  session becomes a socketless bot session.
+- vmangos already does the in-world half of this. In `HandlePlayerLogin`, when a character is still
+  in the world (a reconnect), it does `SetSession` and `m_broadcaster->ChangeSocket`, then calls
+  `SendPacketsAtRelogin` and `Map::ExistingPlayerLogin`. The last one re-sends the self object,
+  resets the visibility set and re-sends aura durations. The swap reuses that path minus its
+  account check and its `SMSG_LOGIN_VERIFY_WORLD`.
+
+**What breaks on a swap, and the fix for each.**
+- **Threading.** `WorldSocket::m_Session` is a raw pointer that the network thread reads in
+  `ProcessIncoming`, while sessions update on the world and map threads (`World::UpdateSessions`,
+  `PACKET_PROCESS_MAP`).
+  - The swap must run at the world thread's single-threaded point, as a queued world task, never
+    inside the chat handler.
+  - The socket's session pointer must change under a lock.
+  - Packets already queued in A's session are dropped. They were the client's input for A.
+- **Mover.**
+  - `m_clientMoverGuid` decides `IsControlledByOwnClient` and the spline acks
+    (`MoveSplineInit` awaits `CMSG_MOVE_SPLINE_DONE` for a client-moved player). It must be
+    cleared on A's session, or the server keeps waiting for acks A's client will never send.
+  - A's movement flags are cleared, since a held forward key would keep it running.
+  - B's mover is set when the client sends `CMSG_SET_ACTIVE_MOVER(B)`.
+- **Anticheat.** `MovementAnticheat::InitNewPlayer` is run on both sessions, so B's first client
+  movement is not judged against A's history.
+- **Bot bookkeeping.**
+  - `PlayerBotMgr::m_bots` is keyed by player guid, so B's entry is re-keyed to A: new
+    `playerGUID` and `accountId`, `ai->SetPlayer(A)`, `A->SetAI(ai)`, `B->SetAI(nullptr)`.
+  - The AI's `m_leaderGuid` becomes B, as does every other party bot's.
+  - `PlayerBotMgr::OnBotLogin` bookkeeping must not run twice.
+- **Group.** Leadership moves to B (`Group::ChangeLeader`). A party bot that leads the group
+  removes itself.
+- **Broadcaster.** A's broadcaster loses the socket, and B's is created on it. Otherwise the
+  client would keep receiving A's view.
+- **Saving.** `PlayerBot.AllowSaving=1` keeps both saving. `m_saveDisabled` is set only for bots
+  created without saving.
+
+**The login burst the client needs for B.** Taken from `HandlePlayerLogin` and
+`SendInitialPackets*`. Each item is sent to the client's socket, now on B's session.
+1. Our own notice, `SMSG_PARTY_SWAP {old, new}`, first, so benilla moves its identity before the
+   data arrives. 1.12 has no such opcode, so this is a custom opcode in an unused number, added to
+   both the vmangos fork and benilla-protocol.
+2. The self object: `SMSG_UPDATE_OBJECT` creates B with `UPDATEFLAG_SELF` and every owner-only
+   field, plus B's item objects. This is what `Map::SendInitSelf` builds. Destroys go out for A's
+   items, which the client may no longer hold.
+3. `SendInitialPacketsBeforeAddToMap`: rest start, bind point, tutorials, initial spells
+   (`SMSG_INITIAL_SPELLS`, with cooldowns), action buttons (from B's own `MasterPlayer`), initial
+   reputations, honor, time speed.
+4. `SendInitialPacketsAfterAddToMap`: zone and world states, aura re-sends, enchantment and item
+   durations.
+5. From the rest of `HandlePlayerLogin`:
+   - `SendPacketsAtRelogin`: proficiencies and spell mods;
+   - account data times, and the friends and ignore lists;
+   - guild event and corpse reclaim delay;
+   - pet spells and mirror timers;
+   - loot rolls under way.
+6. A's object is re-sent to the client as an ordinary player, and the visibility set is rebuilt
+   for B (`ExistingPlayerLogin`). Objects already in view arrive as re-creates of guids the client
+   holds, which benilla applies in place (`net/objects.rs` `Landing::Live`).
+7. Left out:
+   - `SMSG_LOGIN_VERIFY_WORLD`, which is the client's world-entry and loading-screen edge;
+   - the MOTD and the cinematic.
+
+**In benilla-app: what has to change to switch the player identity at runtime.**
+- **Identity.**
+  - `SelfGuid` (used in 170 files) changes from A to B.
+  - The `SelfPlayer` tag moves from A's entity to B's. It is only ever attached at spawn
+    (`net/objects.rs`, where `self_guid` matches), so a re-create of B would not get it.
+  - The name cache entry for "us" changes.
+- **Body and movement.**
+  - `Embodied` and `ActiveMover` move to B through `maintain_embodiment`, which already keys on
+    guid ("the reins change hands by guid").
+  - `MoverClaim::claim(B)` sends `CMSG_SET_ACTIVE_MOVER`.
+  - The `Player` controller resource is reseated from B's streamed pose, which the possession path
+    (`MoverLock.reseat`) already does.
+  - Follow, click-to-move and casts are cancelled on A.
+  - A goes back to remote replay. Without `ActiveMover`, the server-replay lanes take it.
+- **Per-character caches**, rebuilt from B's burst:
+  - item, bag and inventory caches (`item_lane`, `item_watch::BagCache`);
+  - spellbook and cooldowns, action-bar state, reputations, proficiencies, quest log;
+  - talents, skills, honor and pet bar.
+
+  Each is fed by the packets above, but each was written for one character per session. Every one
+  needs a reset hook on the swap, the same list a logout teardown clears (`net/session.rs`)
+  without despawning the world.
+- **The UI.**
+  - The stock FrameXML reads `"player"` live, so unit frames, the casting bar and buffs redraw from
+    events.
+  - Spellbook, action bars, bags, quests, skills, reputation, talents and the character sheet
+    redraw on their events (`SPELLS_CHANGED`, `ACTIONBAR_SLOT_CHANGED`, `BAG_UPDATE`,
+    `QUEST_LOG_UPDATE`, `SKILL_LINES_CHANGED`, `UPDATE_FACTION`, `CHARACTER_POINTS_CHANGED`,
+    `UNIT_INVENTORY_CHANGED`, `PLAYER_ENTERING_WORLD`), which the burst raises through benilla's
+    field watch.
+  - What does not rebind by events is per-character Lua state: `SavedVariablesPerCharacter`,
+    per-character macros, key bindings and chat-frame layout. That state is loaded once per VM.
+  - **So the proof of concept rebinds by an in-world UI reload.** benilla's `ReloadUI()` already
+    runs the teardown and load edges "without leaving the world" (`ui_script/lifecycle.rs`). The
+    in-game UI comes up in 0.5–0.7 s in a debug build. The swap points its per-character identity
+    (`record_from_roster`, the realm/character the state files are keyed by) at B first.
+  - An event-only rebind with no reload is a later optimisation, once the reload's cost is
+    measured.
+
+**Estimated switch time.**
+- Server: one world tick, 50–100 ms, for the queued swap and the burst over loopback.
+- Client: applying the burst takes tens of ms. With the UI reload, 0.5–0.7 s in debug (less in
+  release).
+- **Total about 0.6–0.9 s, with no loading screen and nothing re-streamed.** Without the reload,
+  about 0.15 s.
+
+**The riskiest unknown** is server-side consistency at the moment of the handover:
+- moving a live `WorldSocket` between two `WorldSession`s while the network thread may be inside
+  `ProcessIncoming`;
+- in-flight state on A that assumes a client: pending spline acks, a cast in progress, the
+  anticheat history, an open loot window or trade;
+- `PlayerBotEntry` bookkeeping that assumes the AI created its own player.
+
+If any of these crashes the server or desyncs it, the fallback keeps the swap but goes through
+vmangos's existing reconnect path. That path is tested for sockets, and the account check would
+be relaxed for party accounts. It costs a little more time.
 
 ### Engine changes this needs (to be approved before each is made)
 
@@ -202,7 +356,8 @@ are fork changes.
 | # | Change | For |
 |---|---|---|
 | E0 | **Done (M0).** `benilla_app::AutoLogin { user, pass, character }`: a silent login and the character to enter, sent when the crate chooses (`glue_session/login.rs`, `roster.rs`) | M0 |
-| E1 | A public "enter character" request: log out, then enter character guid X without showing glue, keeping the window and world assets | M1 |
+| E1 | **The identity swap.** `SMSG_PARTY_SWAP {old, new}` in benilla-protocol, and its handling in benilla-app: move `SelfGuid`, `SelfPlayer`, `Embodied`/`ActiveMover` and `MoverClaim` to the new guid; reset the per-character caches without touching the world; reload the UI in place under the new character | M1 |
+| E1b | **Done (relog M1, kept).** `benilla_app::SessionRequest::{Command, Target, Relog, CreateCharacter}` (`glue_session/requests.rs`): server commands for the bots, and character creation for party setup | M1 |
 | E2 | A pausable world clock: route spline sampling, extrapolation, animation, particles, `GetTime`, aura and cooldown clocks and the sky through it, freeze controller output, and make `frame_pace` aware of it | M4 |
 | E3 | A camera-yield hook: an external mode takes the camera transform and input. The app's camera saves its view and stops reading input. | M5 |
 | E4 | Public read access to the party roster and member guids (`ui_party`) and to `SelfGuid` | M2, M6 |
@@ -210,8 +365,8 @@ are fork changes.
 
 Server-side work goes in a vmangos fork kept beside this repo:
 
-- Loading a named character as a bot.
-- Swapping a bot and a player.
+- The session swap (§2.1): a `.party swap <name>` command queued to the world thread, and
+  `SMSG_PARTY_SWAP`.
 - `.pause`.
 - Bot orders.
 
@@ -296,33 +451,66 @@ The game starts and stops its own server. The player never runs or configures an
   - Quitting stops all three processes in 1.2–2.3 s, and nothing is left running.
   - A hard kill of the game takes the server down with it through the job object.
 
-**M1 — Proof of concept: switch between two characters**
+**M1 — Session swap: F6 proof of concept** (§2.1). Done already, from the relog attempt:
+- the party setup: three accounts, Partyone the warrior, Partytwo the priest, Partythree the
+  mage, all GM 6;
+- the party bots loading under whoever is played;
+- pinned and checksummed server archives;
+- the trial navmeshes.
 
-- **Setup.** Two level-appropriate characters, A and B, standing near each other, on two local
-  accounts. `.partybot load` needs the bot's account offline (M0).
-- **Client.**
-  - E1, the enter-character request: `AutoLogin` already carries a character, so E1 is a logout
-    followed by it.
-  - A switch key: F12, or a bevy_ui button with the two names.
-  - Request the swap, then restore the camera's distance and pitch for the new character.
-- **Server.** None needed for the switch itself. Also verify vmangos's bot facilities, recording
-  the commands that exist and whether a named character can be loaded as a bot. If one can, keep
-  B in the world as a bot while A is played.
-- **Accept when:**
-  - A→B→A round-trips three times without a crash.
-  - Each switch shows the right name, unit frame, action bars and bags.
-  - Switch time is measured (trace timestamps, not eyeballed) and reported.
-  - Screenshots are taken before and after a switch.
+Steps:
 
-**M2 — Party bots.** The inactive characters stay in the world as grouped server bots and follow
-the active one. Switching swaps a bot and the player through a server command. This needs E4, E5
-and a server patch. A party bar shows the members with health, and clicking a member switches to
-it.
+1. **Build vmangos from source at the pinned commit.**
+   - Clone `vmangos/core` at `9b7fb4d` into `party-server/src` and build with VS 2022. The
+     CMake bundled with VS, or a portable CMake, plus the dependencies vmangos's Windows docs
+     name.
+   - Check that it reproduces the release binary's behaviour, then switch the launcher's pinned
+     build to our own (`crates/party` setup; the archive pin becomes a local build).
+   - Risk: the dependency setup. Do this first.
+2. **Server: `.party swap <name>`**, admin-only, the target a party bot of ours in our group.
+   - The chat handler only validates and queues a world task.
+   - The task runs at `World::Update`'s single-threaded point and performs §2.1's handover:
+     socket, bot role, mover, anticheat, leader and group lead, broadcaster.
+   - Then it sends `SMSG_PARTY_SWAP` and the burst.
+   - Log every step with timestamps.
+3. **benilla-protocol:** parse `SMSG_PARTY_SWAP`, emitted as `SessionEvent::PartySwap { old, new }`.
+4. **benilla-app (E1).** On `PartySwap`:
+   - move `SelfGuid` and `SelfPlayer`;
+   - reseat `Embodied`/`ActiveMover`/`MoverClaim` (claim the new mover);
+   - stop A's local movement and casts;
+   - reset the per-character caches without touching the world;
+   - then `ReloadUI` in place, with the per-character identity pointed at B.
 
-**M3 — Seamless switch.** The server rebinds the session in place. On the same map the client
-re-enters without glue or a loading screen, and the world and terrain stay resident. The target is
-a switch under 1 s, measured. This needs a client world-entry path that resets per-character
-state (the `SelfGuid`, `MoverClaim`, `Player` and UI caches) without a teardown.
+   The world, terrain and objects stay. The burst's re-creates land in place.
+5. **The crate:**
+   - all members are loaded as bots at startup (as now);
+   - F6 sends `.party swap <next>`;
+   - it measures from the key to the server's swap log, to `PartySwap` in the client, to the UI
+     being up.
+
+   The relog switch and its checks are removed. `SessionRequest::Relog` stays for party setup.
+6. **Checks**, kept from the relog M1:
+   - follow and fight by the swapped-away character;
+   - its XP, items and position across swaps;
+   - for both characters, after a swap: unit frame name, action bars, spellbook, bags, quest log
+     and the character sheet;
+   - no `MSG_MOVE_*` sent for the old character after the swap (`WOW_MOVE_TRACE`, tags
+     `out,snd`);
+   - no anticheat or `[CRASH]` lines in `mangosd.out`.
+
+**Accept when:**
+- A→B→C→A swaps three full rounds with no loading screen, no world despawn (an entity count
+  before and after) and no server error.
+- Each swap is under 1 s, measured from F6 to the UI being up.
+- Screenshots are taken before and after a swap.
+
+**M2 — Party bar.**
+- Party frames with health. Clicking a member swaps to it.
+- The swap when a target is out of range or on another map is defined here. The PoC requires the
+  same map.
+
+**M3 — Swap without the UI reload.** Rebind the stock UI by events alone, if M1's reload cost is
+worth removing. Measure first.
 
 **M4 — Pause.**
 
