@@ -1,0 +1,69 @@
+// Structures the player can build. `model` is an M2 path in the game data; `footprint` is one or
+// more rectangles in the model's own space (WoW axes: x forward, y left), in yards before
+// `scale`, taken from the model's collision box (`benilla-extract m2coll`) or, for a model with
+// no hull, its bounding box. Costs are in Lumber and Stone; `refund` is the fraction returned on
+// sell.
+(
+    structures: [
+        (
+            id: "wood_fence",
+            name: "Wooden fence",
+            model: "World\\Azeroth\\Elwynn\\PassiveDoodads\\ElwynnFences\\ElwynnWoodFence01.m2",
+            scale: 1.0,
+            footprint: [(center: (-2.01, 0.0), size: (4.29, 0.27))],
+            cost: (lumber: 10, stone: 0),
+            refund: 0.75,
+            kind: Wall,
+        ),
+        (
+            id: "stone_wall",
+            name: "Stone wall",
+            model: "World\\Azeroth\\Elwynn\\PassiveDoodads\\ElwynnFences\\ElwynnStoneFence.m2",
+            scale: 1.0,
+            footprint: [(center: (-0.03, 2.65), size: (0.48, 5.85))],
+            cost: (lumber: 0, stone: 20),
+            refund: 0.75,
+            kind: Wall,
+        ),
+        (
+            id: "spike_row",
+            name: "Spiked barricade",
+            model: "World\\Azeroth\\RedRidge\\PassiveDoodads\\spikewall\\BattleGladeWoodSpikesShortRow.m2",
+            scale: 1.0,
+            footprint: [(center: (0.48, -0.23), size: (11.09, 2.68))],
+            cost: (lumber: 25, stone: 0),
+            refund: 0.75,
+            kind: Barricade,
+        ),
+        (
+            id: "spikes",
+            name: "Spikes",
+            model: "World\\Azeroth\\Elwynn\\PassiveDoodads\\BattleGladeWoodSpikes\\BattleGladeWoodSpikes.m2",
+            scale: 1.0,
+            footprint: [(center: (-0.03, -0.09), size: (1.29, 1.51))],
+            cost: (lumber: 5, stone: 0),
+            refund: 0.75,
+            kind: Barricade,
+        ),
+        (
+            id: "guard_tower",
+            name: "Guard tower",
+            model: "World\\Azeroth\\Elwynn\\Buildings\\HumanGuardTower\\HumanGuardTower.m2",
+            scale: 1.0,
+            footprint: [(center: (-0.68, 0.22), size: (12.0, 12.0))],
+            cost: (lumber: 40, stone: 60),
+            refund: 0.75,
+            kind: Tower,
+        ),
+        (
+            id: "watch_tower",
+            name: "Watch tower",
+            model: "World\\Azeroth\\Elwynn\\Buildings\\HumanWatchTower\\HumanWatchTower.m2",
+            scale: 1.0,
+            footprint: [(center: (-0.21, -1.59), size: (12.0, 12.0))],
+            cost: (lumber: 60, stone: 20),
+            refund: 0.75,
+            kind: Tower,
+        ),
+    ],
+)

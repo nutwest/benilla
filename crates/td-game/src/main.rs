@@ -1,18 +1,21 @@
 //! `td-game`: a single-player tower defense over a streamed Azeroth. M0 is the engine boot, the
 //! RTS camera over the arena and the `WOW_WORLDVIEW_SHOT` screenshot; M1 one creature that stands,
 //! walks and stops; M2 a data-driven level whose waves walk the Goldshire road; M3 a pathing grid
-//! and flow field the enemies steer by.
+//! and flow field the enemies steer by; M4 structures the player builds to reroute them.
 
 mod anim;
 mod boot;
+mod build;
 mod camera;
 mod creature;
 mod debug_draw;
+mod economy;
 mod enemy;
 mod flow;
 mod grid;
 mod level;
 mod shot;
+mod structures;
 mod test_block;
 mod waves;
 

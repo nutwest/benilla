@@ -7,6 +7,8 @@ use serde::Deserialize;
 
 use benilla_assets::coords::wow_to_bevy;
 
+use crate::economy::EconomyDef;
+
 /// The file as written.
 #[derive(Deserialize)]
 struct LevelFile {
@@ -19,6 +21,7 @@ struct LevelFile {
     spawns: Vec<(f32, f32)>,
     exit: Exit,
     roads: Vec<RoadFile>,
+    economy: EconomyDef,
     waves: Vec<WaveDef>,
 }
 
@@ -74,6 +77,7 @@ pub struct Level {
     pub exit_center: Vec2,
     pub exit_radius: f32,
     pub roads: Vec<Road>,
+    pub economy: EconomyDef,
     pub waves: Vec<WaveDef>,
 }
 
@@ -126,6 +130,7 @@ pub fn load() -> Result<Level, String> {
                 points: r.points.into_iter().map(v).collect(),
             })
             .collect(),
+        economy: file.economy,
         waves: file.waves,
     };
     let size = max - min;

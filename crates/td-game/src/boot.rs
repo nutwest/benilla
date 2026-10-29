@@ -89,6 +89,9 @@ pub fn run(build: BuildId) -> AppExit {
         crate::flow::plugin,
         crate::test_block::plugin,
         crate::debug_draw::plugin,
+        crate::economy::plugin,
+        crate::structures::plugin,
+        crate::build::plugin,
     ));
 
     // After `AssetPlugin`: the loaders go into the live `AssetServer`, as in the viewer.

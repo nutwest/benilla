@@ -104,13 +104,14 @@ have no reason to. Sappers that do can be a later enemy type.
 
 ### 1.5 Economy
 
-Two currencies, kept apart so units and structures do not compete for one pool:
+Two pairs of currencies, kept apart so units and structures do not compete for one pool: units
+cost Gold and Food, structures Lumber and Stone.
 
-| | Gold (units) | Lumber (structures) |
+| | Gold, Food (units) | Lumber, Stone (structures) |
 |---|---|---|
 | Start | Per level | Per level |
-| Income | A bounty per kill, by enemy type | A grant per wave cleared, plus a trickle per second during waves |
-| Spent on | Recruiting, later upgrades | Building |
+| Income | Gold: a bounty per kill, by enemy type. Food: a grant per wave cleared | A grant per wave cleared, plus a Lumber trickle per second during waves |
+| Spent on | Recruiting (Gold), each unit's upkeep slot (Food), later upgrades | Building: wooden structures cost mostly Lumber, stone ones mostly Stone |
 | Refund | None (units are not sold; they can be dismissed) | `refund` × cost on sell |
 
 All numbers live in the level and def files so balancing never needs a rebuild. Calling the next
@@ -345,7 +346,7 @@ Units use single-skin creature stand-ins until M9.
 | # | Milestone | Done when |
 |---|---|---|
 | **M3** | **Grid and flow field.** Grid bounds, spawns, exit and roads in the level file; static bake (holes, slope, liquid, world geometry); road costs; Dijkstra integration and direction fields; enemies steer by the field instead of the polyline; F1/F2 overlays. | Top-down shot of the grid overlay over Goldshire with buildings and trees blocked and the road cheapest; mid-wave shot of enemies on the road following the field. |
-| **M4** | **Structures.** `structures.ron`; static M2 spawn with collider; cursor placement with ghost, rotation and validity overlay; rasterize into the structure layer; recompute; refuse a blocking placement; sell with refund; Lumber with start amount, wave grant and trickle. | Shot of a wall forcing enemies off the road and back on; a refused placement logged with its reason; the grid overlay showing the structure cells. |
+| **M4** | **Structures.** `structures.ron`; static M2 spawn with collider; cursor placement with ghost, rotation and validity overlay; rasterize into the structure layer; recompute; refuse a blocking placement; sell with refund; Lumber and Stone with start amounts, wave grants and a Lumber trickle. | Shot of a wall forcing enemies off the road and back on; a refused placement logged with its reason; the grid overlay showing the structure cells. |
 | **M5** | **Units and combat.** `units.ron` with stand-ins (picked with `TD_FIND_DISPLAY`); recruit and place; health and damage on both sides; enemy death (Death clip, then despawn); archers with hold position and First/Nearest/Strongest; soldiers with guard, engage, leash and return; A* for unit moves; Gold with bounties; projectiles as gizmo lines, then an arrow M2. Attack and combat-ready clips added to `anim.rs`. | Mid-wave shot of archers firing and a soldier engaging inside its radius; log lines for each priority choosing different targets in one scripted test. |
 | **M6** | **Enemies fight back.** Enemy combat stats and aggro; melee blocking; units knocked out and recovering at their post; garrison rules prepared (melee cannot target a flagged unit). | Shot of a knocked-out unit lying down while enemies pass; log of its recovery. |
 | **M7** | **Towers and garrison.** Tower slots and anchor heights; order a unit up and down; range bonus; melee immunity. | Shot of an archer on a guard tower outranging ground archers. |
@@ -358,9 +359,177 @@ grid has the most unknowns (bake cost, ray behaviour against Goldshire's buildin
 game code over the M1 creature recipe. M9 is the only milestone that ports from `benilla-app`, and
 it is isolated behind the `display_id` swap.
 
-## 7. Open questions
+The campaign layer (§8) comes after this list; nothing in M4–M10 waits on it. What M4–M8 do owe
+it is the battle interface (§7): new state should arrive through, and leave by, the shapes that
+section defines, so the later refactor is a change of where the data comes from, not of how the
+battle uses it.
 
-- **Currency names and starting balance.** "Gold" and "Lumber" are placeholders.
+## 7. Battle interface
+
+A battle is one defense of one location. Today the binary is the battle and `goldshire.ron` is all
+of its input. With a campaign above it, the campaign builds the input, runs the battle (or
+auto-resolves it, §8.4), and applies the result. This section fixes that boundary.
+
+### 7.1 What a battle takes in
+
+```text
+BattleSetup {
+    location: Location,          // where: static, authored once per settlement
+    attackers: AttackerForce,    // who comes, how and when
+    defenders: DefenderForce,    // what the player brings
+    structures: Vec<PlacedStructure>,  // what already stands there
+    rules: BattleRules,
+}
+
+Location {                       // today's level file, minus the waves and lives
+    name, map_id, arena_center,
+    bounds, slope_limit,
+    spawns: Vec<Spawn>,          // each named by approach ("north road"), so a raid can pick one
+    exit,                        // the settlement core the attackers try to reach
+    roads,
+    forbidden: Vec<Rect>,        // no-build areas
+}
+
+AttackerForce {
+    waves: Vec<WaveDef>,         // today's waves, generated from the army's composition
+    spawn_for_wave: Vec<SpawnId>,
+}
+
+DefenderForce {
+    units: Vec<RosterUnit>,      // unit def, health, knocked-out state, veterancy later
+    resources: Resources,        // gold, food, lumber, stone available to this battle
+    income: BattleIncome,        // per-wave grants and trickles, if the campaign allows any
+}
+
+PlacedStructure {                // also the shape the battle returns (§7.2)
+    def: StructureId, position: (x, y), yaw, health,
+}
+
+BattleRules {
+    integrity: u32,              // today's lives: leaks before the settlement falls
+    time_limit: Option<f32>,
+    allow_building: bool,        // a surprise raid may forbid it
+}
+```
+
+`Location` is static and reusable: the grid bake (§4.2) depends only on it, so its static layer
+can be cached per location. Everything else changes per battle.
+
+### 7.2 What a battle returns
+
+```text
+BattleResult {
+    outcome: Held { integrity_left } | Fell { leaks },
+    defenders: Vec<RosterUnit>,      // survivors' health; knocked-out units count as alive
+    attackers_left: Vec<(EnemyId, u32)>,  // for a raid that retreats to try again
+    structures: Vec<PlacedStructure>,     // what still stands, with its damage
+    resources: Resources,            // what is left of the battle's budget, refunds included
+    stats: { kills, leaks, duration, resources_spent },
+}
+```
+
+Structures persist between battles at the same location: a settlement that was walled stays
+walled, at whatever health the last battle left it.
+
+### 7.3 What would change in the current code
+
+Nothing here is refactored yet. When the campaign starts, these are the seams:
+
+| Code | Reads today | Would read |
+|---|---|---|
+| `boot.rs` `run` | `level::load()` once, before the app builds; map and focus fixed for the process | A `BattleSetup` resource, possibly at runtime: the battle becomes a Bevy `State`, and entering it sets `ViewFocus::entry` and `CurrentMap` (the engine already handles a map change through `MapChange`) |
+| `level.rs` | `LevelFile` with everything | Splits into `Location` (bounds, spawns, exit, roads) and the per-battle parts; `waves` and `lives` leave it |
+| `waves.rs` | `level.waves`, `level.lives`; logs leaks and defeat | `AttackerForce` and `BattleRules`; writes a `BattleResult` and leaves the state instead of logging |
+| `creature.rs` `load_library` | Displays named by `level.waves` | Displays named by attackers and defenders alike |
+| `grid.rs` | Bakes from `Level` every run | Bakes per `Location`, cached; the structure layer seeded from `BattleSetup::structures` |
+| `camera.rs` | `level.center_bevy()` | `Location::arena_center` |
+| Structures (M4) | `structures.ron` defs; placements made in the battle | The same defs; placements seeded from the setup and returned in the result |
+| Economy (M4/M5) | Start amounts from the level file | `DefenderForce::resources`; leftover returned |
+| Units (M5) | Recruited in the battle | Also brought in from `DefenderForce::units`; survivors returned |
+
+Two rules for M4–M8 keep this cheap: battle state lives in resources and components that a setup
+could fill (never in `const`s or the level loader), and anything the result would report
+(placements, spend, survivors) is kept as it happens, not reconstructed at the end.
+
+## 8. Campaign layer (future)
+
+A grand-strategy layer over both continents, in the spirit of Crusader Kings III and Victoria 3 but
+deliberately small at first: provinces, income, recruitment and raids. Every attack on a
+settlement the player owns can become a battle on that place's real terrain, which is the point:
+the strategic map and the battlefield are the same world.
+
+### 8.1 The map
+
+- **Both continents**: Eastern Kingdoms (map 0) and Kalimdor (map 1). A battle already streams
+  whichever map its location names.
+- **Provinces** are zones and their major subzones, from `AreaTable.dbc` (zone and parent area),
+  with outlines and placement from `WorldMapArea.dbc` and `WorldMapOverlay.dbc`. All three ship in
+  the 1.12 data, as does the world-map art (`Interface\WorldMap\`, 1,540 files: continent and
+  zone tiles), so the strategic map can be drawn from the game's own maps in Bevy UI.
+- **Adjacency** (which provinces border) is authored, since the client data has no graph; zone
+  boundaries in `WorldMapArea` help draft it.
+- **Settlements**: each province has zero or more, each with a battle `Location` (§7.1). Only
+  settlements with an authored location can host a battle; the rest always auto-resolve.
+
+### 8.2 Factions
+
+Playable: human, dwarf, gnome, night elf, orc, troll, tauren and undead, each starting at its
+capital:
+
+| Faction | Capital (start province) |
+|---|---|
+| Human | Stormwind City (Elwynn Forest) |
+| Dwarf | Ironforge (Dun Morogh) |
+| Gnome | Gnomeregan's exile, at Ironforge's Tinker Town (Dun Morogh) |
+| Night elf | Darnassus (Teldrassil) |
+| Orc | Orgrimmar (Durotar) |
+| Troll | Sen'jin Village (Durotar) |
+| Tauren | Thunder Bluff (Mulgore) |
+| Undead | Undercity (Tirisfal Glades) |
+
+Gnomes and dwarves share a capital province and trolls and orcs share Durotar, as in 1.12; the
+campaign can either give each a distinct start or make them a two-faction start. The rest of the
+map starts neutral or held by non-playable powers (Defias, Scourge, Burning Legion remnants), which
+supply the raids.
+
+### 8.3 The minimal loop
+
+A turn (a month, say) does four things:
+
+1. **Income**: each owned province yields Gold, Food, Lumber and Stone by its type (farmland,
+   forest, mountain, town).
+2. **Recruitment**: the player spends Gold and Food to raise units into a province's roster, the
+   pool a battle's `DefenderForce` draws from.
+3. **Building**: Lumber and Stone fortify a settlement between battles, placing structures into its
+   persistent `PlacedStructure` list (or the player builds during the battle itself).
+4. **Raids**: hostile powers send forces at adjacent owned provinces; the player may send their own
+   to take or raid neutral and enemy provinces.
+
+Deeper systems (characters and dynasties, diplomacy, pops and markets) are out of scope until the
+loop is fun.
+
+### 8.4 Attacks and battles
+
+- An attack on an owned settlement produces a `BattleSetup`: its location, the raiding force as
+  waves, the province's roster and stores, and its standing structures.
+- **Minor attacks auto-resolve**: when the defenders' strength exceeds the attackers' by a margin
+  (or the player chooses), a formula over unit and structure strength decides the result, with
+  losses, and returns the same `BattleResult` a played battle would.
+- **Major attacks are played** as tower-defense battles on the location's real terrain.
+- The result feeds back: survivors return to the roster, structures keep their damage, a fallen
+  settlement changes hands (or is sacked), and resources left are returned to the province.
+
+### 8.5 Prerequisites
+
+The campaign needs, beyond M4–M10: the battle interface refactor (§7.3); battle locations
+authored per settlement (a level file each, so road tracing must get cheaper, e.g. derived from the
+ADT's road texture layers); humanoid units for every playable race (M9, route A, which covers all
+eight races' baked NPCs); Kalimdor locations verified to stream and bake like Goldshire; and a
+strategic-map UI. None of it has a milestone number yet.
+
+## 9. Open questions
+
+- **Starting balances and Food's role.** Whether Food is a per-unit cost or an upkeep cap.
 - **Moving placed units.** Free, with a cooldown, or a Gold cost?
 - **Unit cap.** A hard cap, or Gold alone as the limit?
 - **Enemies and structures.** Never attack them (this design), or a sapper type later?

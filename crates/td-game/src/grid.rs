@@ -147,6 +147,22 @@ impl Grid {
         self.flags[i] & STATIC_BLOCKED != 0
     }
 
+    /// What makes a statically blocked cell so, for a refusal's message.
+    pub fn blocked_reason(&self, i: usize) -> &'static str {
+        let f = self.flags[i];
+        if f & SOLID != 0 {
+            "a building, tree or other solid"
+        } else if f & WATER != 0 {
+            "deep water"
+        } else if f & STEEP != 0 {
+            "ground too steep"
+        } else if f & HOLE != 0 {
+            "a hole in the terrain"
+        } else {
+            "open ground"
+        }
+    }
+
     pub fn has_structure(&self, i: usize) -> bool {
         self.structure[i] > 0
     }

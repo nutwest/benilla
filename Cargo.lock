@@ -6367,6 +6367,7 @@ dependencies = [
 name = "td-game"
 version = "0.2.0"
 dependencies = [
+ "avian3d",
  "benilla-assets",
  "benilla-formats",
  "benilla-world",

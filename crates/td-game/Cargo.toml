@@ -14,6 +14,8 @@ workspace = true
 benilla-assets = { path = "../benilla-assets", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
 benilla-world = { path = "../benilla-world" }
+# Static colliders for built structures; the version `benilla-world` already uses.
+avian3d = "0.6"
 bevy.workspace = true
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }

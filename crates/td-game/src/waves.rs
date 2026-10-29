@@ -8,6 +8,7 @@ use benilla_assets::coords::wow_to_bevy;
 use benilla_world::world_point::TerrainHeights;
 
 use crate::creature::CreatureSpawner;
+use crate::economy::{Amount, Stores};
 use crate::enemy::{Enemy, EnemyMove};
 use crate::flow::Flow;
 use crate::grid::Grid;
@@ -29,6 +30,8 @@ struct WaveRunner {
     /// Seconds to the next spawn.
     timer: f32,
     finished: bool,
+    /// Waves whose clearing grant has been paid.
+    paid: Vec<bool>,
 }
 
 pub fn plugin(app: &mut App) {
@@ -36,7 +39,35 @@ pub fn plugin(app: &mut App) {
         .add_systems(Startup, |mut commands: Commands, level: Res<Level>| {
             commands.insert_resource(Lives(level.lives));
         })
-        .add_systems(Update, run_waves.before(EnemyMove));
+        .add_systems(Update, (run_waves.before(EnemyMove), pay_income));
+}
+
+/// The level's income: a grant per wave cleared (all its enemies spawned and gone, leaked or,
+/// later, killed) and the Lumber trickle while waves run.
+fn pay_income(
+    time: Res<Time>,
+    level: Res<Level>,
+    lives: Res<Lives>,
+    mut runner: ResMut<WaveRunner>,
+    mut stores: ResMut<Stores>,
+    enemies: Query<&Enemy>,
+) {
+    if !runner.started || lives.0 == 0 {
+        return;
+    }
+    if !runner.finished {
+        stores.trickle(Amount {
+            lumber: level.economy.lumber_per_sec * time.delta_secs(),
+            ..default()
+        });
+    }
+    runner.paid.resize(level.waves.len(), false);
+    for wave in 0..runner.index.min(level.waves.len()) {
+        if !runner.paid[wave] && !enemies.iter().any(|e| e.wave == wave) {
+            runner.paid[wave] = true;
+            stores.grant(level.economy.per_wave, &format!("wave {} cleared", wave + 1));
+        }
+    }
 }
 
 fn run_waves(

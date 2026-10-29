@@ -26,6 +26,12 @@
             ],
         ),
     ],
+    // Gold and Food pay for units, Lumber and Stone for structures.
+    economy: (
+        start: (gold: 100, food: 20, lumber: 150, stone: 120),
+        per_wave: (food: 5, lumber: 40, stone: 20),
+        lumber_per_sec: 1.0,
+    ),
     waves: [
         // Kobolds at a walk.
         (display_id: 26, count: 8, interval: 2.5, speed: 2.5, health: 60.0, delay: 0.0),
