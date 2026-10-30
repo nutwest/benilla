@@ -71,6 +71,7 @@ mod server_ride;
 mod setup;
 mod state;
 pub(crate) mod step_probe;
+mod swap_blend;
 mod swim;
 mod view_subject;
 /// A far-sight pose, for a test that seats the camera on another object.
@@ -93,6 +94,7 @@ pub(crate) struct ControlRestore;
 pub(crate) use camera::apply_self_model_fade;
 use controller::control;
 pub(crate) use controller::LookSample;
+pub(crate) use swap_blend::SwapBlend;
 // The private camera and `state` items are re-imported for the modules beside this one, which
 // name them `super::X`.
 pub(crate) use camera::{head_height, CameraControl, CameraPivot, LookConfig, PressGesture};
@@ -374,6 +376,15 @@ impl Plugin for PlayerPlugin {
                 .in_set(PlayerControlSet)
                 .in_set(WorldStage::Input)
                 .run_if(not(resource_exists::<crate::run_mode::CaptureMode>))
+                .in_set(crate::client_state::InWorldGated),
+        )
+        // A party swap's camera glide, over what `control` placed (`swap_blend`).
+        .init_resource::<SwapBlend>()
+        .add_systems(
+            Update,
+            swap_blend::apply_swap_blend
+                .after(control)
+                .in_set(WorldStage::Input)
                 .in_set(crate::client_state::InWorldGated),
         )
         // The posture queue (the `/sit` family), which `control` alone executes.

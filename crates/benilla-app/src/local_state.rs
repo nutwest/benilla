@@ -355,8 +355,23 @@ impl CharacterFile {
 /// `benilla-config/<kind>/<realm>-<character>[.txt]`, the one place a per-character path is made.
 fn character_path(file: CharacterFile, realm: &str, character: &str) -> Option<PathBuf> {
     let (dir, suffix) = file.place();
+    let character = SHARED_CHARACTER.get().map_or(character, String::as_str);
     let key = format!("{}-{}{suffix}", file_token(realm), file_token(character));
     Some(home()?.join(dir).join(key))
+}
+
+/// The key every character's state is filed under instead of its own name, once set.
+static SHARED_CHARACTER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Deviation: files every character's per-character state (saved variables, macros, bindings,
+/// camera, chat, layout, add-on state) under `key`, where the reference keeps one folder per
+/// character. A crate on top that plays several characters as one (the party, whose members swap
+/// in place) shares one UI configuration among them. Set once, before the UI first loads; a
+/// second call is ignored.
+pub fn share_character_state(key: &str) {
+    if SHARED_CHARACTER.set(key.to_string()).is_err() {
+        bevy::log::warn!("local_state: per-character state already shared; {key:?} ignored");
+    }
 }
 
 /// A rename's move of the character's state, the reference's `MoveFileW` of its folder from the

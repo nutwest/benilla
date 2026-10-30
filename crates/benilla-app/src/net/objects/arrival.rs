@@ -21,10 +21,36 @@ pub(super) struct Arrival<'w> {
     reactive: Option<ResMut<'w, crate::ui_action::ReactiveSpells>>,
     lane: Option<ResMut<'w, crate::ui_world_enter::ArrivalLane>>,
     stable: Option<ResMut<'w, crate::ui_stable::StableOpen>>,
+    /// A party swap's new character, whose create in place is our arrival.
+    party: Option<ResMut<'w, crate::net::PartyArrivalOwed>>,
+    /// Where the party arrival's lane items begin, held to the next frame.
+    hold: Option<ResMut<'w, crate::lanes::LaneHold>>,
+}
+
+impl Arrival<'_> {
+    /// Deviation: whether `guid`'s create is a party swap's arrival, taken once. The reference
+    /// runs a shown object's create as its all-fields watch, never its create hook (`0x465d79`,
+    /// `0x465d8e`); after a swap the new character is shown already, and its self create in the
+    /// burst must arrive as a login's does.
+    pub(super) fn take_party(&mut self, guid: u64) -> bool {
+        match self.party.as_deref_mut() {
+            Some(owed) if owed.0 == Some(guid) => {
+                owed.0 = None;
+                // The arrival's cascade and the rebind fire a frame after the burst that brought
+                // it, which spreads the swap's UI work over two frames.
+                if let Some(hold) = self.hold.as_deref_mut() {
+                    hold.hold_here();
+                }
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The arrival's writes, in its order, and its item on the arrival lane, at the create's place.
 pub(super) fn arrive(sc: &mut Scene, arrival: &mut Arrival, guid: u64) {
+    debug!("net: our arrival, guid {guid:#x}");
     // `ResetSpellBook 0x4b23a0` empties the reactive list (`0x5dea86`), and each initial spell's
     // `LearnSpell` runs the registrar, whose leg takes it in again in wire order
     // (`0x5dea96`-`0x5deab9`).

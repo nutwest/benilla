@@ -213,6 +213,7 @@ pub use benilla_protocol::{messages::ObjectType, ObjectFields};
 pub use glue_session::login::AutoLogin;
 /// A crate on top asks the session for a server command, a relog or a new character.
 pub use glue_session::requests::SessionRequest;
+pub use local_state::share_character_state;
 pub use net::Objects;
 pub use target::Interact;
 

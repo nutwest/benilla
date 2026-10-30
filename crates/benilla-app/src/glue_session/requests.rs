@@ -15,6 +15,10 @@ use crate::net::{
 pub enum SessionRequest {
     /// Says `line` in the world, as typed into the chat box; a `.` line is a server command.
     Command(String),
+    /// Says `line` in party chat (`/p`), dropped when ungrouped; a `.` line is a server command.
+    /// vmangos takes party chat on its async packet thread (every 20 ms), not at the next map
+    /// update (`MapUpdateInterval`, 100 ms) as a say, so a command answers sooner.
+    PartyCommand(String),
     /// Selects the unit `guid` (`CMSG_SET_SELECTION`), as a click does; 0 clears.
     Target(u64),
     /// Logs out (`CMSG_LOGOUT_REQUEST`), leaves character select for the login park as select's
@@ -90,6 +94,12 @@ pub(crate) fn drive_requests(
         match ask {
             SessionRequest::Command(line) => send(ClientCommand::Chat {
                 kind: ChatKind::Say,
+                target: None,
+                text: line.clone(),
+                language: None,
+            }),
+            SessionRequest::PartyCommand(line) => send(ClientCommand::Chat {
+                kind: ChatKind::Party,
                 target: None,
                 text: line.clone(),
                 language: None,

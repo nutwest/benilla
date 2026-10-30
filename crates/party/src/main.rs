@@ -14,6 +14,10 @@ fn main() -> AppExit {
     // Read when the app builds: the realmlist dials our realmd, and the realm list takes our realm.
     std::env::set_var("WOW_HOST", server::REALMD_ADDR);
     std::env::set_var("WOW_REALM", server::REALM_NAME);
+    // One UI configuration for the whole party: its members swap in place, so their saved
+    // variables, macros and key bindings are the party's, not each character's. Action bars stay
+    // per character, server-side.
+    benilla_app::share_character_state("Party");
 
     let supervisor = Arc::new(server::Supervisor::new(launched));
     let exit = benilla_app::run_with(

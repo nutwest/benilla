@@ -11,7 +11,8 @@
 //! - [`trace`] / [`journal`]: the CSV instruments (`WOW_STREAM_TRACE`, `WOW_FPS_JOURNAL`); the
 //!   journal also answers the `fpsJournal` CVar, in every build,
 //! - [`stall`]: the stuck-main-thread self-sampler (macOS),
-//! - [`census`]: the env-gated premise counters.
+//! - [`census`]: the env-gated premise counters,
+//! - [`lua_spikes`]: which UI chunks a slow frame's Lua ran (`WOW_LUA_SPIKES`).
 //!
 //! `clock` and `journal` compile in the player build; everything else is
 //! `#[cfg(feature = "dev")]`, and the journal depends on nothing on the dev side.
@@ -32,6 +33,8 @@ mod gpu;
 #[cfg(feature = "dev")]
 mod hud;
 mod journal;
+#[cfg(feature = "dev")]
+mod lua_spikes;
 #[cfg(feature = "dev")]
 mod main_split;
 #[cfg(feature = "dev")]
@@ -141,6 +144,7 @@ impl Plugin for PerfPlugin {
         #[cfg(target_os = "macos")]
         stall::plugin(app);
         phases::plugin(app);
+        lua_spikes::plugin(app);
         gpu::plugin(app);
         blend_check::plugin(app);
     }

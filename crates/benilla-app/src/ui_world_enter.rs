@@ -102,6 +102,8 @@ impl Plugin for WorldEnterPlugin {
     fn build(&self, app: &mut App) {
         use crate::lanes::LaneApp;
         app.init_resource::<ArrivalLane>()
+            .init_resource::<PartyRebindOwed>()
+            .init_resource::<PartyRow>()
             .add_exclusive_lane("arrival", peek, fire, reads)
             .add_systems(
                 OnExit(crate::client_state::ClientState::InWorld),
@@ -150,13 +152,15 @@ fn fire(In(until): In<Until>, world: &mut World) {
 fn run(world: &mut World, entry: Entry) {
     match entry {
         Entry::Arrival { control_gained } => arrival(world, control_gained),
-        Entry::Reload => cascade(world),
+        Entry::Reload => cascade(world, false),
     }
 }
 
 /// `0x5dea50` from the book's reset on (`0x5dea86`); its watchers, the error speech table and the
 /// item cache's no-op (`0x5dea58`-`0x5dea81`) signal nothing.
 fn arrival(world: &mut World, control_gained: bool) {
+    // A party swap's arrival: the rebind follows, and the target stays.
+    let party = world.resource::<PartyRebindOwed>().0;
     leg(world, seat_player);
     replay_book(world);
     // `0x5deac2` → `0x4b2fd0(1, 0)`: the book sorted, `SPELLS_CHANGED` (`0x4b302a`).
@@ -169,21 +173,129 @@ fn arrival(world: &mut World, control_gained: bool) {
     if control_gained {
         leg(world, control_rose);
     }
-    cascade(world);
+    cascade(world, party);
     crate::death::signal_death_state(world);
     leg(world, crate::ui_logout::set_in_world);
     // `0x5debcc` → `0x6e6ca0`: the class family the spell modifiers gate on.
     leg(world, class_family);
     apply_form_edits(world);
+    // Deviation: a party swap's arrival (`crate::net`'s `party_swap`) rebinds the UI to the new
+    // character by its events, where the reference enters the world anew.
+    if std::mem::take(&mut world.resource_mut::<PartyRebindOwed>().0) {
+        // The player record `UnitName`/`UnitClass("player")` answer, made as a load makes it from
+        // the pick's roster row: here the new character's row, which the swap made.
+        let row = world
+            .get_resource_mut::<PartyRow>()
+            .and_then(|mut row| row.0.take());
+        let record = row.and_then(|row| {
+            let mut roster = crate::glue_session::roster::Roster::default();
+            roster.chars = vec![row.clone()];
+            roster.pending_pick = Some(row.guid);
+            crate::ui_script::record_from_roster(&roster, crate::ui_unit::world_unit_names(world))
+        });
+        world.insert_resource(PartyRecord(record));
+        leg(world, party_rebind);
+    }
+}
+
+/// Owed by a party swap (`crate::net`'s `party_swap`): the next arrival, the new character's
+/// self create, rebinds the UI with [`party_rebind`].
+#[derive(Resource, Default)]
+pub(crate) struct PartyRebindOwed(pub(crate) bool);
+
+/// The new character's roster row as the swap made it (name, race, class and sex from its
+/// descriptor), for the rebind's player record.
+#[derive(Resource, Default)]
+pub(crate) struct PartyRow(pub(crate) Option<benilla_protocol::messages::Character>);
+
+/// The new character's player record, for [`party_rebind`] to seat.
+#[derive(Resource, Default)]
+struct PartyRecord(Option<benilla_ui::script::PlayerRecord>);
+
+/// `UNIT_FLAG_IN_COMBAT`, for the combat state's edge.
+const UNIT_FLAG_IN_COMBAT: u32 = 0x0008_0000;
+
+/// The party swap's rebind: every frame showing "player" is told it changed, in one pass, after the
+/// new character's own arrival seated it.
+///
+/// What it fires is what the stock frames need beyond the cascade, which fires
+/// `PLAYER_ENTERING_WORLD`, `SPELLS_CHANGED`, the bar's slots, the bags' rescan, the quest log's and
+/// the lists' rebuilds. On `PLAYER_ENTERING_WORLD` the stock FrameXML already redraws the player
+/// frame (`PlayerFrame.lua`, `UnitFrame_Update`: name, portrait, health, power), every action
+/// button (`ActionButton.lua`), the paper doll's model (`PaperDollFrame.lua`), experience
+/// (`MainMenuBar.lua`), honor (`HonorFrame.lua`) and the shapeshift bar (`BonusActionBarFrame.lua`).
+/// What it leaves is fired here, each event with the reference's arguments. `CHARACTER_POINTS_CHANGED`
+/// is left out: it carries the points gained, which `ChatFrame.lua` announces.
+fn party_rebind(
+    mut vm: crate::script_calls::HostedVm,
+    me: Query<&ObjectStore, With<SelfPlayer>>,
+    mut record: ResMut<PartyRecord>,
+) {
+    use benilla_ui::script::ScriptValue;
+    let start = std::time::Instant::now();
+    let in_combat = me
+        .iter()
+        .next()
+        .is_some_and(|s| s.0.unit_flags() & UNIT_FLAG_IN_COMBAT != 0);
+    let record = record.0.take();
+    vm.run(|script| {
+        let Some(script) = script else { return };
+        if let Some(record) = record {
+            script.set_player_record(record);
+        }
+        // The character frame's name and portrait (`CharacterFrame.lua`), faction, auras, the bag
+        // slot buttons and the pet.
+        script.fire_event("UNIT_NAME_UPDATE", vec![ScriptValue::Str("player".into())]);
+        script.fire_event(
+            "UNIT_PORTRAIT_UPDATE",
+            vec![ScriptValue::Str("player".into())],
+        );
+        script.fire_event("UNIT_FACTION", vec![ScriptValue::Str("player".into())]);
+        script.fire_event("UNIT_AURA", vec![ScriptValue::Str("player".into())]);
+        script.fire_event(
+            "UNIT_INVENTORY_CHANGED",
+            vec![ScriptValue::Str("player".into())],
+        );
+        script.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
+        // The buff frame (`BuffFrame.lua`), resting (`PlayerFrame.lua`), money, the character
+        // sheet's guild, the spell book's and bags' cooldowns, the pet bar, and a cast bar left
+        // from the old character (`CastingBarFrame.lua`).
+        script.fire_event("PLAYER_AURAS_CHANGED", Vec::new());
+        script.fire_event("PLAYER_UPDATE_RESTING", Vec::new());
+        script.fire_event("PLAYER_MONEY", Vec::new());
+        script.fire_event("PLAYER_GUILD_UPDATE", Vec::new());
+        script.fire_event("SPELL_UPDATE_COOLDOWN", Vec::new());
+        script.fire_event("BAG_UPDATE_COOLDOWN", Vec::new());
+        script.fire_event("PET_BAR_UPDATE", Vec::new());
+        script.fire_event("SPELLCAST_STOP", Vec::new());
+        // The player frame's combat state.
+        let regen = if in_combat {
+            "PLAYER_REGEN_DISABLED"
+        } else {
+            "PLAYER_REGEN_ENABLED"
+        };
+        script.fire_event(regen, Vec::new());
+    });
+    info!(
+        "ui: party rebind fired in {:.1} ms",
+        start.elapsed().as_secs_f32() * 1000.0
+    );
+    if benilla_assets::trace::enabled_for("pty") {
+        benilla_assets::trace::line("pty", "rebind");
+    }
 }
 
 /// The cascade `0x4908c0` past its once-per-world latch (`0x4908c7`, the sweep's
 /// [`crate::ui_script::LeavingWorldArmed`]), its legs in call order.
-fn cascade(world: &mut World) {
+fn cascade(world: &mut World, party: bool) {
     leg(world, seat_player);
     // `0x490927` `SelectTarget(0)`, the collection, `PLAYER_LOGIN` if armed, `PLAYER_ENTERING_WORLD`
     // and the minimap initializer (`0x49096f`).
-    leg(world, open_cascade);
+    if party {
+        leg(world, open_cascade_keeping_target);
+    } else {
+        leg(world, open_cascade);
+    }
     // `0x490974` → `0x4989c0`: the chat display latch released, its lines shown.
     leg(world, crate::ui_chat::release_display);
     // `0x490979` → `0x4e4f90`: the bar's usable cache, then the bonus bar.
@@ -458,6 +570,19 @@ fn open_cascade(mut vm: crate::script_calls::VmWith<()>) {
     });
 }
 
+/// Deviation: [`open_cascade`] for a party swap's arrival, without its `SelectTarget(0)`. A world
+/// entry starts a session with nothing selected; a swap mid-fight keeps what the player was
+/// fighting, and clearing it re-signals every frame that reads the target, which in combat cost
+/// the swap's frame over 150 ms.
+fn open_cascade_keeping_target(mut vm: crate::script_calls::VmWith<()>) {
+    vm.run(|script| {
+        if let Some(script) = script {
+            script.open_world_enter();
+            script.fire_world_enter_events();
+        }
+    });
+}
+
 /// `0x4e4f90`: the bar's usable cache refreshed in place (`0x4e5c00`), then the bonus bar's offset
 /// from our form (`0x4e4fc0`), each with its signal.
 fn action_bar(
@@ -507,6 +632,8 @@ fn reads(world: &mut World) -> FilteredAccessSet {
         system_access(world, crate::death::repop_on_world_enter),
         system_access(world, crate::ui_logout::set_in_world),
         system_access(world, class_family),
+        system_access(world, party_rebind),
+        system_access(world, open_cascade_keeping_target),
         system_access(world, fire_signal),
         system_access(world, crate::tutorial::fire_now),
         system_access(world, ghost_of),
@@ -551,7 +678,7 @@ pub(crate) fn push_arrival(world: &mut World) {
 /// The cascade alone, as a `/reload`'s item fires it, for a test of its legs.
 #[cfg(test)]
 pub(crate) fn run_cascade(world: &mut World) {
-    crate::lanes::firing(crate::lanes::stamp(), || cascade(world));
+    crate::lanes::firing(crate::lanes::stamp(), || cascade(world, false));
 }
 
 /// Every item queued, fired alone with the host lent, for a test that drives the arrival without

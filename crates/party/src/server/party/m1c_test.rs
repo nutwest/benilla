@@ -20,11 +20,14 @@ use bevy::log::info;
 
 use benilla_app::SessionRequest;
 
-use super::swap_test::{status, ServerLog, Status, PRIEST, TEST_MOB_HP, TEST_MOB_NAME};
+use super::swap_test::{status, ServerLog, Status, PRIEST, TEST_MOB_NAME};
 use super::{append, settle, swap, verdict, Member, ROSTER, TEST_MOB};
 use crate::server::db::Db;
 use crate::server::layout::Layout;
 use crate::server::Supervisor;
+
+/// The fight creature's health: enough to outlast a swap and its checks at the party's levels.
+const FIGHT_HP: u32 = 600;
 
 fn moved(a: &Status, b: &Status) -> f32 {
     let d: f32 = (0..3).map(|i| (a.pos[i] - b.pos[i]).powi(2)).sum();
@@ -45,7 +48,7 @@ fn swap_and_check(
     let (old, new) = (*active, (*active + 1) % members.len());
     let (on, nn) = (members[old].name, members[new].name);
     let units_before = sup.units.lock().unwrap().len();
-    let took = swap(sup, layout, members, old, new, Instant::now())?;
+    let took = swap(sup, layout, members, old, new, super::STEP_LIMIT)?;
     *active = new;
     settle(Duration::from_millis(500));
     let s0 = status(sup, log, members)?;
@@ -154,7 +157,7 @@ pub(super) fn checks(
         let mob = mob.context("the summoned creature never streamed")?;
         sup.ask(SessionRequest::Target(mob));
         settle(Duration::from_millis(150));
-        sup.ask(SessionRequest::Command(format!(".modify hp {TEST_MOB_HP}")));
+        sup.ask(SessionRequest::Command(format!(".modify hp {FIGHT_HP}")));
         settle(Duration::from_millis(150));
         sup.ask(SessionRequest::Command(".partybot attackstart".into()));
         settle(Duration::from_secs(2));
@@ -173,6 +176,18 @@ pub(super) fn checks(
             &format!("fight {fight_no}"),
             &report,
         )?;
+        let seen: Vec<String> = sup
+            .units
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|u| u.entry == TEST_MOB)
+            .map(|u| format!("{:#x} hp {}", u.guid, u.health))
+            .collect();
+        report(format!(
+            "fight {fight_no}: the client streams the creature {mob:#x}: [{}]",
+            seen.join(", ")
+        ));
 
         // The swapped-away character fights on as a bot until the creature dies.
         let start = Instant::now();

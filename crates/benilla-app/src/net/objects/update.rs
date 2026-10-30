@@ -933,7 +933,8 @@ fn on_update_end(
             // (`0x465d8e`) against its stale watch copy, re-firing its last write's edges as the
             // values block above does; benilla's [`notify`] fires nothing for either.
             Notify::Create { guid, kind } => {
-                if unshown.remove(&guid) {
+                let party_arrival = sc.self_guid.0 == Some(guid) && arrival.take_party(guid);
+                if unshown.remove(&guid) || party_arrival {
                     create_hook(&mut sc, guid, kind, script.as_deref(), &mut arrival);
                 } else {
                     let moved = copies.get(&guid).unwrap_or(&none);

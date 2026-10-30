@@ -115,6 +115,20 @@ pub(crate) fn stamp() -> Stamp {
     }
 }
 
+/// Deviation: a stamp the next drain stops at, then forgets, so what is stamped from there on
+/// fires a frame later, in order. The reference handles every packet of a frame's read in one
+/// pass; a party swap (`crate::net`'s `party_swap`) holds its new character's arrival to the
+/// frame after the burst, so neither frame carries both.
+#[derive(Resource, Default)]
+pub(crate) struct LaneHold(Option<u64>);
+
+impl LaneHold {
+    /// Stop the next drain here: what is stamped from now on fires in the drain after it.
+    pub(crate) fn hold_here(&mut self) {
+        self.0 = Some(CLOCK.load(Ordering::Relaxed));
+    }
+}
+
 /// The item firing on this thread, if any: a verb its listeners call runs at that item's moment.
 pub(crate) fn firing_now() -> Option<Stamp> {
     FIRING.get()
@@ -459,6 +473,11 @@ pub(crate) fn fire_in_order(world: &mut World) {
         begin(world);
     }
     let fence = CLOCK.load(Ordering::Relaxed);
+    // A hold stops this drain where it was set, once.
+    let fence = world
+        .get_resource_mut::<LaneHold>()
+        .and_then(|mut hold| hold.0.take())
+        .map_or(fence, |held| held.min(fence));
     loop {
         let heads: Vec<Option<Stamp>> = lanes
             .0

@@ -364,7 +364,7 @@ fn fire_probe_key(
 /// each later entry. Re-armed on world entry, not VM rebuild, or `ReloadUI()` would loop; the
 /// [`ProbeLog`](install_probe_log) channel does follow the VM. `WOW_PROBE_LUA_EACH_VM=1` re-arms it
 /// on every new VM too, a `ReloadUI()` included, for a probe that reads each rebuilt UI once (a
-/// party swap's reload).
+/// party swap's reload) and every change of our own character (a party swap's rebind).
 pub(crate) struct ProbeLuaPlugin;
 
 impl Plugin for ProbeLuaPlugin {
@@ -381,6 +381,7 @@ impl Plugin for ProbeLuaPlugin {
         let each_vm = std::env::var_os("WOW_PROBE_LUA_EACH_VM").is_some_and(|v| v == "1");
         app.insert_resource(ProbeLua {
             each_vm,
+            last_self: None,
             chunk,
             at,
             again,
@@ -397,6 +398,8 @@ struct ProbeLua {
     again: f32,
     /// `WOW_PROBE_LUA_EACH_VM`: a new VM owes a run, as a world entry does.
     each_vm: bool,
+    /// Our guid at the last look, for `each_vm`'s re-arm on a change of character.
+    last_self: Option<u64>,
     /// Ready world entries, counted on the rising edge.
     entries: u32,
     /// Entries already fired into; `fired < entries` means one is owed.
@@ -445,6 +448,7 @@ fn fire_probe_lua(
     self_player: Query<(), With<crate::net::SelfPlayer>>,
     state: Res<State<crate::client_state::ClientState>>,
     entry_ui_pending: Option<Res<crate::ui_script::PendingEntryUiLoad>>,
+    self_guid: Res<crate::net::SelfGuid>,
 ) {
     hosted_vm.run(|script| {
         if probe.chunk.is_empty() {
@@ -480,6 +484,15 @@ fn fire_probe_lua(
                 info!("probe-lua: new VM {} at {now:.1}s", script.session());
             }
             probe.logged_vm = script.session();
+        }
+        // A new character in the same VM (a party swap) is owed one too.
+        if probe.each_vm && probe.last_self != self_guid.0 {
+            if probe.last_self.is_some() && probe.fired >= probe.entries {
+                probe.entries += 1;
+                probe.ready_at = now;
+                info!("probe-lua: new character {:?} at {now:.1}s", self_guid.0);
+            }
+            probe.last_self = self_guid.0;
         }
         if !probe_lua_due(&probe, now) {
             return;

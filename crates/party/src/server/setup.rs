@@ -475,6 +475,9 @@ pub fn write_configs(layout: &Layout, secrets: &Secrets) -> anyhow::Result<()> {
         ("PlayerBot.AllowSaving", "1".into()),
         // A hard stop loses at most two minutes.
         ("PlayerSave.Interval", "120000".into()),
+        // Our fork's world tick (`WorldRunnable`, default 50 ms): shorter, so a queued party swap
+        // runs within 10 ms. Game logic runs on elapsed time, so only the loop's cadence changes.
+        ("World.TickMs", "10".into()),
         // The account is a GM only so it may run `.partybot`; it plays as a player.
         ("GM.LoginState", "0".into()),
         ("GM.Visible", "1".into()),

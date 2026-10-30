@@ -96,6 +96,7 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
     // removes itself.
     sup.ask(SessionRequest::Command(".party lead".into()));
     load_bots(sup, db, &members, active)?;
+    warm_up(sup, layout, &members, active)?;
     record_played(layout, members[active].name);
     sup.cover.store(false, Ordering::Relaxed);
     info!(
@@ -116,36 +117,111 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
         }
         record_played(layout, members[active].name);
     }
-    while !sup.cancelled() {
-        if let Some(pressed) = sup.switch_key.lock().unwrap().take() {
-            let next = (active + 1) % members.len();
-            match swap(sup, layout, &members, active, next, pressed) {
-                Ok(_) => active = next,
-                Err(err) => warn!("party: swap failed: {err:#}"),
+    loop {
+        let next = (active + 1) % members.len();
+        *sup.next_swap.lock().unwrap() = Some(members[next].name.to_string());
+        let pressed = loop {
+            if sup.cancelled() {
+                return Ok(());
+            }
+            if let Some(pressed) = sup.switch_key.lock().unwrap().take() {
+                break pressed;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        match see_through(sup, layout, &members, active, next, pressed, STEP_LIMIT) {
+            Ok(_) => active = next,
+            Err(err) => warn!("party: swap failed: {err:#}"),
+        }
+    }
+}
+
+/// The preload: behind the startup cover, once through every member and back to `active`. The
+/// client learns a member's spells, bar, bags and model only by playing it (the server sends them in
+/// its burst), so playing each once loads its icons, item records, textures and portrait where a
+/// later swap finds them.
+fn warm_up(
+    sup: &Supervisor,
+    layout: &Layout,
+    members: &[Member],
+    active: usize,
+) -> anyhow::Result<()> {
+    let start = Instant::now();
+    sup.set(Phase::Ready, "Preparing the party");
+    let mut at = active;
+    for _ in 0..members.len() {
+        let next = (at + 1) % members.len();
+        // A party bot just loaded is not ready to take over until its first update: retried.
+        let mut tries = 0;
+        while let Err(err) = swap(sup, layout, members, at, next, Duration::from_millis(1500)) {
+            tries += 1;
+            if tries >= 10 {
+                return Err(err);
             }
         }
-        std::thread::sleep(Duration::from_millis(10));
+        // The new character's rebind and its asset requests, a frame or two after the takeover.
+        std::thread::sleep(WARM_UP_SETTLE);
+        at = next;
     }
+    info!(
+        "party: warm-up through {} members in {:.0} ms",
+        members.len(),
+        start.elapsed().as_secs_f32() * 1000.0
+    );
     Ok(())
 }
 
-/// Plays `members[to]` in place of `members[from]`, which stays on as a party bot: `.party swap`,
-/// then the wait for the client to take the new character over. The time from the key to the
-/// takeover is logged; the UI's in-place reload follows it (`ui_script: ReloadUI done`).
+/// How long the warm-up rests on each member: its rebind and the asset loads it starts.
+const WARM_UP_SETTLE: Duration = Duration::from_millis(250);
+
+/// Presses the switch key for `members[to]`, as a player would, and sees the swap through: the
+/// checks' path to the key's.
 fn swap(
     sup: &Supervisor,
     layout: &Layout,
     members: &[Member],
     from: usize,
     to: usize,
+    limit: Duration,
+) -> anyhow::Result<Duration> {
+    *sup.next_swap.lock().unwrap() = Some(members[to].name.to_string());
+    sup.press_switch();
+    let start = Instant::now();
+    let pressed = loop {
+        if let Some(pressed) = sup.switch_key.lock().unwrap().take() {
+            break pressed;
+        }
+        if start.elapsed() > STEP_LIMIT {
+            bail!("the switch key was never taken");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    see_through(sup, layout, members, from, to, pressed, limit)
+}
+
+/// Waits for the client to play `members[to]` after the key the bridge sent its `.party swap`
+/// on, and logs the time from that frame to the takeover.
+fn see_through(
+    sup: &Supervisor,
+    layout: &Layout,
+    members: &[Member],
+    from: usize,
+    to: usize,
     pressed: Instant,
+    limit: Duration,
 ) -> anyhow::Result<Duration> {
     let (old, new) = (&members[from], &members[to]);
     info!("party: swap {} -> {} on the key", old.name, new.name);
-    sup.ask(SessionRequest::Command(format!(".party swap {}", new.name)));
-    wait(sup, &format!("play {}", new.name), || {
-        Ok(sup.self_guid.load(Ordering::Relaxed) == new.guid)
-    })?;
+    // Polled finely: the takeover is timed in tens of milliseconds.
+    while sup.self_guid.load(Ordering::Relaxed) != new.guid {
+        if sup.cancelled() {
+            bail!("cancelled");
+        }
+        if pressed.elapsed() > limit {
+            bail!("timed out waiting to play {}", new.name);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
     let took = pressed.elapsed();
     let line = format!(
         "swap {} -> {}: playing {} {:.0} ms after the key",

@@ -505,7 +505,8 @@ Steps:
   - **Per-character identity:** the roster's pick names B. A row is made for B from its
     descriptor and name when it is on another account, which a party member is. The pick keys
     the saved variables, macros, add-on enable state and the player record.
-  - `ReloadUI` runs in place (`ReloadUiPending`); it now logs `ReloadUI done in N ms`.
+  - `ReloadUI` runs in place (`ReloadUiPending`); it now logs `ReloadUI done in N ms`. M3 replaced
+    this reload with an event rebind.
 - **Server, found by M1c:** the swap sends `Group::SendUpdate()` after the burst.
   `SMSG_GROUP_LIST` lists the others, not oneself, and the client still held the old character's
   list. Without it, the party frames showed the new character and not the old one.
@@ -782,8 +783,105 @@ and the pieces listed below).
 - The swap when a target is out of range or on another map is defined here. The PoC requires the
   same map.
 
-**M3 — Swap without the UI reload.** Rebind the stock UI by events alone, if M1's reload cost is
-worth removing. Measure first.
+**M3 — The instant swap.** Done. Goals: no UI reload, no flicker, no frame spikes, and under
+150 ms from F6 to a controllable character with the right UI.
+
+- **Measured first** (debug build, six swaps; `WOW_FRAME_PHASES=25`, `WOW_STALL=0`,
+  `WOW_FPS_JOURNAL`, and the new `WOW_LUA_SPIKES`).
+  - **Normal play:** 16.7 ms per frame (vsync), about 5 ms of main-thread work.
+  - **Every swap, two spikes:**
+    - The swap-packet frame, 46–57 ms. Of it, `Update/Input` was 34–41 ms, about 20 ms of it Lua
+      (stock `ActionButton.lua`, `ItemButtonTemplate.lua` and `PaperDollFrame.lua` reacting to the
+      burst).
+    - The next frame, 500–650 ms. The in-place `ReloadUI` was 445–545 ms of it, the new UI's first
+      update 35–78 ms more.
+  - **Key to UI up:** 699–834 ms.
+- **What changed:**
+  1. **Event rebind instead of `ReloadUI`.**
+     - The reload is gone. By the reference's rule (`0x465d79`), a create for an object already
+       shown runs its all-fields watch, not its create hook. So the swap marks the new
+       character's in-place self create as our arrival
+       (`PartyArrivalOwed`, `net/objects/arrival.rs`). That gives the arrival's full path: reactive
+       spells, the bag cache, the mover claim, and the world-enter cascade with
+       `PLAYER_ENTERING_WORLD`.
+     - A rebind leg follows (`ui_world_enter::party_rebind`). It seats the player record that
+       `UnitName`/`UnitClass("player")` answer, from a roster row the swap makes for the new
+       character from its descriptor (`ui_world_enter::PartyRow`). The roster itself stays as the
+       login set it.
+     - It then fires only what `PLAYER_ENTERING_WORLD` leaves, taken from the stock FrameXML's
+       registrations:
+       - `"player"` unit events: `UNIT_NAME_UPDATE`, `UNIT_PORTRAIT_UPDATE`, `UNIT_FACTION`,
+         `UNIT_AURA`, `UNIT_INVENTORY_CHANGED`, `UNIT_PET`;
+       - player events: `PLAYER_AURAS_CHANGED`, resting, money, guild;
+       - the spell and bag cooldowns, the pet bar, `SPELLCAST_STOP`, and the combat state.
+     - On `PLAYER_ENTERING_WORLD` the stock frames already redraw the player frame
+       (`UnitFrame_Update`), every action button, the paper doll's model, experience, honor and
+       the shapeshift bar.
+     - The swap's cascade keeps the target. A login clears it (`SelectTarget(0)`); mid-fight that
+       re-signalled every target reader and cost one swap's frame 237 ms.
+  2. **One UI configuration for the party.**
+     - `benilla_app::share_character_state("Party")` (`local_state`) files every character's state
+       under one key: saved variables, macros, bindings, camera, chat, layout and add-on state.
+       Action bars stay per character, server-side.
+     - The fork's swap no longer sends `SMSG_ACCOUNT_DATA_MD5`, so a swap fetches no character's
+       stored chat or macros. Applying the stored chat setup had cost 8 ms per swap.
+  3. **Preload by a warm-up.**
+     - The client learns a member's spells, bar, bags and model only from that member's own burst.
+       So at startup, behind the loading cover, the launcher swaps once through the party and back.
+     - That loads every member's icons, item records, textures and portrait, and swaps after it
+       load nothing new. Before, a member's first swap cost more (a 9.8 ms rebind against
+       2.6 ms after).
+     - It adds 0.5–4 s to startup: retries wait while freshly loaded party bots initialize.
+  4. **The work spread over two frames.**
+     - A one-drain hold (`lanes::LaneHold`, set when the party arrival is taken) stops the lane
+       drain at the arrival.
+     - The burst and its item records fire in frame N; the cascade and the rebind fire in N+1, in
+       order.
+  5. **Camera glide.** For 0.25 s after a swap, the camera the controller places behind the new
+     body is offset back toward the old one by the bodies' gap, eased with smoothstep
+     (`player/swap_blend.rs`, after `control`).
+  6. **Latency:**
+     - **F6 path:** the swap goes out on F6's own frame, from the bridge, in party chat
+       (`SessionRequest::PartyCommand`). vmangos takes party chat on its async packet thread every
+       20 ms, where a say waits for the 100 ms map update.
+     - **World tick:** the fork's world loop tick is a config key, `World.TickMs` (`WorldRunnable`,
+       default 50 ms). The embedded server runs it at 10 ms, so the queued swap runs within 10 ms.
+- **After** (debug build, same trace, after the warm-up):
+
+  | | Before | After |
+  |---|---|---|
+  | Key to controllable (client plays the new character) | 703–856 ms | 34–53 ms |
+  | Key to UI rebound | 699–834 ms | 87–110 ms |
+  | Slow frames per swap | 46–57 ms, then 500–650 ms | two frames of 31–42 ms |
+  | Mid-fight swap | as above | two frames of 33–37 ms |
+  | Key to UI rebound, `play` build | — | 62–114 ms |
+  | Slow frames per swap, `play` build | — | two or three frames of 21–42 ms |
+
+  - The two remaining frames are the stock UI's own work: about 12 ms of `PLAYER_ENTERING_WORLD`,
+    11–20 ms of item set-up, and 12–15 ms of Lua.
+  - The debug build compiles our crates, the Lua VM among them, at opt-level 1. The `play` rows are
+    the release profile (`cargo build --profile play`), the one a player runs.
+  - Every fired event carries the reference's arguments (`ui_script::event_shape_gate`). An early
+    rebind fired `CHARACTER_POINTS_CHANGED` with none, and `ChatFrame.lua` raised an error dialog on
+    it; it is left out.
+- **Checked:**
+  - **The UI per character, by probe after every swap:** name, class, the player frame's text, the
+    spellbook, the action bar and bag 0. Casts work: the mage's Frost Armor lands, the priest's
+    Lesser Heal spends mana.
+  - **The M1c checks:** the mover claimed, the walk and the old character following, 30 of 30
+    in the final `play` run, with no UI runtime error and one loading screen (the login)
+    across it.
+  - **Screenshots 0.15 s after each swap:** the camera mid-glide, every bar and frame drawn, no
+    error dialog.
+  - **Tests:** benilla-app's touched modules pass, 3,228, among them the swap handler's, the
+    glide's, the event-shape gate and the lane guards. fmt and clippy are clean.
+  - **Not fixed:** the M1c fight check is flaky. The client's `.modify hp` on the summoned
+    creature does not hold, so a fight can end before the check looks. That fails the check
+    without showing a swap fault.
+- **New instruments:**
+  - `WOW_LUA_SPIKES=<ms>` (`perf/lua_spikes.rs`): the chunks a slow frame's Lua ran.
+  - `WOW_PROBE_LUA_EACH_VM=1`: re-runs the Lua probe on each change of character too.
+  - `ui: party rebind fired` and the `pty` trace tag time the rebind.
 
 **M4 — Pause.**
 

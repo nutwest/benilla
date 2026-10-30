@@ -33,6 +33,7 @@ pub(crate) use objects::continue_refusal_walk;
 pub(crate) use objects::wire;
 pub(crate) use objects::Listed;
 pub(crate) use objects::{release_unheld, ReleasePending};
+pub(crate) use party_swap::PartyArrivalOwed;
 mod reputations;
 mod session;
 #[cfg(test)]

@@ -84,8 +84,12 @@ pub struct Supervisor {
     outbox: Mutex<Vec<benilla_app::SessionRequest>>,
     /// Our character is in the world, as the app last saw it.
     in_world: AtomicBool,
-    /// When the switch key went down, not yet acted on.
+    /// When the switch key went down and its swap was sent, not yet seen through.
     switch_key: Mutex<Option<Instant>>,
+    /// The member the switch key swaps to, kept by the controller; the key sends its swap at once.
+    next_swap: Mutex<Option<String>>,
+    /// A press of the switch key the checks made, which the next frame takes as the key.
+    virtual_key: AtomicBool,
     /// The guid of the character the client plays, 0 out of the world.
     self_guid: AtomicU64,
     /// A walk forward the checks asked for: how long to hold the key, not yet begun.
@@ -109,6 +113,8 @@ impl Supervisor {
             outbox: Mutex::default(),
             in_world: AtomicBool::new(false),
             switch_key: Mutex::default(),
+            next_swap: Mutex::default(),
+            virtual_key: AtomicBool::new(false),
             self_guid: AtomicU64::new(0),
             walk: Mutex::default(),
             units: Mutex::default(),
@@ -275,15 +281,23 @@ fn bridge(
         .and_then(|me| objects.iter().find(|(_, e, _)| *e == me).map(|(g, ..)| g))
         .unwrap_or(0);
     sup.self_guid.store(guid, Ordering::Relaxed);
-    if keys.just_pressed(SWITCH_KEY) {
-        sup.press_switch();
+    let pressed = keys.just_pressed(SWITCH_KEY) || sup.virtual_key.swap(false, Ordering::Relaxed);
+    // The swap goes out in the key's own frame, in party chat (`SessionRequest::PartyCommand`),
+    // which the server takes sooner than a say; the controller then sees it through.
+    if pressed {
+        if let Some(name) = sup.next_swap.lock().unwrap().clone() {
+            session.write(benilla_app::SessionRequest::PartyCommand(format!(
+                ".party swap {name}"
+            )));
+            *sup.switch_key.lock().unwrap() = Some(Instant::now());
+        }
     }
 }
 
 impl Supervisor {
-    /// The switch key went down now: the key's own path, which the checks drive too.
+    /// Presses the switch key from the checks: the next frame takes it as the key.
     fn press_switch(&self) {
-        *self.switch_key.lock().unwrap() = Some(Instant::now());
+        self.virtual_key.store(true, Ordering::Relaxed);
     }
 }
 
