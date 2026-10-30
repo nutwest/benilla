@@ -25,6 +25,7 @@ pub(crate) mod handlers;
 pub(crate) mod io;
 pub(crate) mod motion;
 mod objects;
+mod party_swap;
 #[cfg(test)]
 pub(crate) use objects::answer_item;
 pub(crate) use objects::continue_refusal_walk;
@@ -80,6 +81,7 @@ impl Plugin for NetPlugin {
         game_time::register(app);
         world::register(app);
         session::register(app);
+        party_swap::register(app);
         objects::register(app);
         crate::names::net::register(app);
         app.insert_resource(NetEvents(handles.events))

@@ -389,6 +389,10 @@ fn parse_server_body(
                 orientation,
             }
         }
+        opcode::SMSG_PARTY_SWAP => ServerPacket::PartySwap {
+            old: read_u64_le(&mut r)?,
+            new: read_u64_le(&mut r)?,
+        },
         opcode::SMSG_LOGIN_VERIFY_WORLD => {
             let map = read_u32_le(&mut r)?;
             let position = Vector3d::read(&mut r)?;
@@ -1848,6 +1852,26 @@ mod tests {
         assert_eq!(
             tail, 2,
             "the body's bytes after the zlib stream are the tail"
+        );
+    }
+
+    #[test]
+    fn a_party_swap_reads_its_two_guids_and_no_more() {
+        let mut body = 3u64.to_le_bytes().to_vec();
+        body.extend(0x1_0000_0001u64.to_le_bytes());
+        let (packet, tail) =
+            parse_server_with_tail(opcode::SMSG_PARTY_SWAP, &body).expect("16 bytes parse");
+        assert!(matches!(
+            packet,
+            ServerPacket::PartySwap {
+                old: 3,
+                new: 0x1_0000_0001
+            }
+        ));
+        assert_eq!(tail, 0);
+        assert!(
+            parse_server(opcode::SMSG_PARTY_SWAP, &body[..12]).is_err(),
+            "a short body fails"
         );
     }
 

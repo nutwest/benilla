@@ -30,14 +30,14 @@ use crate::server::layout::Layout;
 use crate::server::Supervisor;
 
 /// Kobold Vermin's name, as `.party status` prints a victim.
-const TEST_MOB_NAME: &str = "Kobold Vermin";
+pub(super) const TEST_MOB_NAME: &str = "Kobold Vermin";
 /// Its health for the test, set with `.modify hp`.
-const TEST_MOB_HP: u32 = 200;
+pub(super) const TEST_MOB_HP: u32 = 200;
 /// The priest's `ChrClasses` id: PartyBotAI makes it a healer, which takes no victim.
-const PRIEST: u8 = 5;
+pub(super) const PRIEST: u8 = 5;
 
 /// New lines of `Server.log` since the last read.
-struct ServerLog {
+pub(super) struct ServerLog {
     path: PathBuf,
     offset: u64,
     partial: String,
@@ -46,7 +46,7 @@ struct ServerLog {
 }
 
 impl ServerLog {
-    fn new(layout: &Layout) -> anyhow::Result<Self> {
+    pub(super) fn new(layout: &Layout) -> anyhow::Result<Self> {
         let path = layout.logs().join("Server.log");
         let offset = std::fs::metadata(&path)
             .with_context(|| format!("no {}", path.display()))?
@@ -109,24 +109,26 @@ impl ServerLog {
 
 /// A member as `.party status` prints it.
 #[derive(Debug, Default, Clone)]
-struct Status {
-    session: String,
-    mover: String,
-    ai: String,
-    leader: String,
-    dist: f32,
-    group_leader: bool,
-    combat: bool,
-    victim: String,
+pub(super) struct Status {
+    pub(super) session: String,
+    pub(super) mover: String,
+    pub(super) ai: String,
+    pub(super) leader: String,
+    pub(super) dist: f32,
+    pub(super) group_leader: bool,
+    pub(super) combat: bool,
+    pub(super) victim: String,
     /// The victim's health, 0 without one.
-    victim_hp: u32,
-    pending_moves: u32,
-    spline_ack: u32,
-    raw: String,
+    pub(super) victim_hp: u32,
+    pub(super) pending_moves: u32,
+    pub(super) spline_ack: u32,
+    pub(super) raw: String,
+    /// Where it stands, WoW coordinates.
+    pub(super) pos: [f32; 3],
 }
 
 /// Asks `.party status` and reads one line per member.
-fn status(
+pub(super) fn status(
     sup: &Supervisor,
     log: &mut ServerLog,
     members: &[Member],
@@ -170,6 +172,14 @@ fn status(
                 victim_hp: num("victim_hp").max(0.0) as u32,
                 pending_moves: num("pending_moves") as u32,
                 spline_ack: num("spline_ack") as u32,
+                pos: kv.get("pos").map_or([0.0; 3], |p| {
+                    let mut c = p.split(',').map(|v| v.parse().unwrap_or(0.0));
+                    [
+                        c.next().unwrap_or(0.0),
+                        c.next().unwrap_or(0.0),
+                        c.next().unwrap_or(0.0),
+                    ]
+                }),
                 raw: body.to_string(),
             },
         );

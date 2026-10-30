@@ -1106,11 +1106,16 @@ pub(crate) fn run_pending_reload(world: &mut World) {
         return;
     }
     info!("ui_script: ReloadUI — ending the UI session and building a new one");
+    let start = std::time::Instant::now();
     // A boot VM, never the glue's: the reload builds no glue (`0x495664` then `0x495669`), and the
     // load replaces this VM at once.
     close_ui_session(world, ShutdownRoot::Reload);
     install_boot_vm(world);
     load_ingame_ui_seated(world, LoadSeat::Live);
+    info!(
+        "ui_script: ReloadUI done in {:.0} ms",
+        start.elapsed().as_secs_f32() * 1000.0
+    );
     // `UI_Init` ends by re-entering the world-enter cascade (`0x490168`), its sends included, but
     // only with the active player set (`0x490166 je`): our own player's entity exists. Not
     // `SetActiveMover`, which only the player's create runs.

@@ -362,7 +362,9 @@ fn fire_probe_key(
 /// `WOW_PROBE_LUA="<chunk>"`: runs the chunk in the live UI VM once per world entry, first at
 /// `WOW_PROBE_LUA_AT` seconds (default 10), then `WOW_PROBE_LUA_AGAIN` seconds (default 4) into
 /// each later entry. Re-armed on world entry, not VM rebuild, or `ReloadUI()` would loop; the
-/// [`ProbeLog`](install_probe_log) channel does follow the VM.
+/// [`ProbeLog`](install_probe_log) channel does follow the VM. `WOW_PROBE_LUA_EACH_VM=1` re-arms it
+/// on every new VM too, a `ReloadUI()` included, for a probe that reads each rebuilt UI once (a
+/// party swap's reload).
 pub(crate) struct ProbeLuaPlugin;
 
 impl Plugin for ProbeLuaPlugin {
@@ -376,7 +378,9 @@ impl Plugin for ProbeLuaPlugin {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(4.0);
+        let each_vm = std::env::var_os("WOW_PROBE_LUA_EACH_VM").is_some_and(|v| v == "1");
         app.insert_resource(ProbeLua {
+            each_vm,
             chunk,
             at,
             again,
@@ -391,6 +395,8 @@ struct ProbeLua {
     chunk: String,
     at: f32,
     again: f32,
+    /// `WOW_PROBE_LUA_EACH_VM`: a new VM owes a run, as a world entry does.
+    each_vm: bool,
     /// Ready world entries, counted on the rising edge.
     entries: u32,
     /// Entries already fired into; `fired < entries` means one is owed.
@@ -467,6 +473,12 @@ fn fire_probe_lua(
         }
         if probe.logged_vm != script.session() {
             install_probe_log(script);
+            // A VM after the entry's own: owed a run of its own when asked for.
+            if probe.each_vm && probe.logged_vm != 0 && probe.fired >= probe.entries {
+                probe.entries += 1;
+                probe.ready_at = now;
+                info!("probe-lua: new VM {} at {now:.1}s", script.session());
+            }
             probe.logged_vm = script.session();
         }
         if !probe_lua_due(&probe, now) {

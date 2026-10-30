@@ -178,6 +178,11 @@ pub enum ServerPacket {
     TransferAborted {
         reason: u8,
     },
+    /// [`super::opcode::SMSG_PARTY_SWAP`]: the client now plays `new` in place of `old`.
+    PartySwap {
+        old: u64,
+        new: u64,
+    },
     LoginVerifyWorld {
         map: u32,
         position: Vector3d,
@@ -1351,6 +1356,7 @@ impl ServerPacket {
             ServerPacket::TransferPending { .. } => "SMSG_TRANSFER_PENDING".into(),
             ServerPacket::TransferAborted { .. } => "SMSG_TRANSFER_ABORTED".into(),
             ServerPacket::LoginVerifyWorld { .. } => "SMSG_LOGIN_VERIFY_WORLD".into(),
+            ServerPacket::PartySwap { .. } => "SMSG_PARTY_SWAP".into(),
             ServerPacket::TimeSpeed { .. } => "SMSG_LOGIN_SETTIMESPEED".into(),
             ServerPacket::GameSpeedSet { .. } => "SMSG_GAMESPEED_SET".into(),
             ServerPacket::GameTimeUpdate { .. } => "SMSG_GAMETIME_UPDATE".into(),

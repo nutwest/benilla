@@ -733,6 +733,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             orientation,
             needs_ack: true,
         }],
+        ServerPacket::PartySwap { old, new } => vec![SessionEvent::PartySwap { old, new }],
         ServerPacket::LoginVerifyWorld {
             map,
             position,

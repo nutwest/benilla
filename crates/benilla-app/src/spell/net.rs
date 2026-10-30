@@ -30,6 +30,11 @@ use crate::query_cache::Ask;
 pub(super) fn register(app: &mut App) {
     use SessionEventKind as K;
     app.net_handler(K::Connected, on_world_enter)
+        // Deviation: a party swap changes the character with no world entry or load: its cast
+        // state resets as at an entry, and its cooldowns go as a world load frees them, since the
+        // new character's `SMSG_INITIAL_SPELLS` appends its own.
+        .net_handler(K::PartySwap, on_world_enter)
+        .net_handler(K::PartySwap, free_cooldowns_on_party_swap)
         .net_handler(K::SpellBook, on_spell_book)
         .net_handler(K::ActionButtons, on_action_buttons)
         .net_handler(K::SpellLearned, on_spell_learned)
@@ -73,6 +78,17 @@ fn free_cooldowns_on_worldport(
 ) {
     player.free_all();
     pet.cooldowns.free_all();
+}
+
+/// [`free_cooldowns_on_worldport`] on a party swap's event.
+fn free_cooldowns_on_party_swap(
+    In(ev): In<SessionEvent>,
+    player: ResMut<Cooldowns>,
+    pet: ResMut<crate::ui_pet::PetBar>,
+) {
+    if let SessionEvent::PartySwap { .. } = ev {
+        free_cooldowns_on_worldport(player, pet);
+    }
 }
 
 /// The cast lifecycle's state and catalogs, which every handler here folds its packet into,
@@ -733,7 +749,10 @@ fn on_world_enter(
     mut spell_mods: ResMut<crate::spell::SpellModifiers>,
     mut learned: ResMut<crate::ui_action::LearnedAbilities>,
 ) {
-    if let SessionEvent::Connected { .. } = ev {
+    if matches!(
+        ev,
+        SessionEvent::Connected { .. } | SessionEvent::PartySwap { .. }
+    ) {
         spell_mods.clear();
         targeting.clear();
         pending.clear_slot();

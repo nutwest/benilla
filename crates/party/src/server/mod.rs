@@ -3,7 +3,7 @@
 //! when the game exits. A supervisor thread does the work and then drives the party ([`party`]);
 //! the app reads its [`Status`] for the overlay and carries its asks to the session.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -60,8 +60,6 @@ pub struct UnitSnap {
     /// Bevy coordinates.
     pub pos: Vec3,
     pub health: u32,
-    /// What it has selected (`UNIT_FIELD_TARGET`), 0 for nothing.
-    pub target: u64,
     pub is_self: bool,
 }
 
@@ -86,8 +84,12 @@ pub struct Supervisor {
     outbox: Mutex<Vec<benilla_app::SessionRequest>>,
     /// Our character is in the world, as the app last saw it.
     in_world: AtomicBool,
-    /// The switch key was pressed and not yet acted on.
-    switch_key: AtomicBool,
+    /// When the switch key went down, not yet acted on.
+    switch_key: Mutex<Option<Instant>>,
+    /// The guid of the character the client plays, 0 out of the world.
+    self_guid: AtomicU64,
+    /// A walk forward the checks asked for: how long to hold the key, not yet begun.
+    walk: Mutex<Option<Duration>>,
     /// The units the client streams, sampled by the app.
     units: Mutex<Vec<UnitSnap>>,
 }
@@ -106,7 +108,9 @@ impl Supervisor {
             cover: AtomicBool::new(true),
             outbox: Mutex::default(),
             in_world: AtomicBool::new(false),
-            switch_key: AtomicBool::new(false),
+            switch_key: Mutex::default(),
+            self_guid: AtomicU64::new(0),
+            walk: Mutex::default(),
             units: Mutex::default(),
         }
     }
@@ -220,7 +224,8 @@ impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Server(Arc::clone(&self.0)))
             .add_systems(Startup, start)
-            .add_systems(Update, (bridge, sample_units, report_in_world));
+            .add_systems(Update, (bridge, sample_units, report_in_world))
+            .add_systems(First, walk);
     }
 }
 
@@ -252,8 +257,8 @@ fn start(server: Res<Server>) {
 /// The switch key.
 const SWITCH_KEY: KeyCode = KeyCode::F6;
 
-/// Sends the controller's asks, and tells it whether we are in the world and whether the switch
-/// key went down.
+/// Sends the controller's asks, and tells it which character we play and when the switch key went
+/// down.
 fn bridge(
     server: Res<Server>,
     objects: benilla_app::Objects,
@@ -264,10 +269,21 @@ fn bridge(
     for ask in sup.outbox.lock().unwrap().drain(..) {
         session.write(ask);
     }
-    sup.in_world
-        .store(objects.player().is_some(), Ordering::Relaxed);
+    let me = objects.player();
+    sup.in_world.store(me.is_some(), Ordering::Relaxed);
+    let guid = me
+        .and_then(|me| objects.iter().find(|(_, e, _)| *e == me).map(|(g, ..)| g))
+        .unwrap_or(0);
+    sup.self_guid.store(guid, Ordering::Relaxed);
     if keys.just_pressed(SWITCH_KEY) {
-        sup.switch_key.store(true, Ordering::Relaxed);
+        sup.press_switch();
+    }
+}
+
+impl Supervisor {
+    /// The switch key went down now: the key's own path, which the checks drive too.
+    fn press_switch(&self) {
+        *self.switch_key.lock().unwrap() = Some(Instant::now());
     }
 }
 
@@ -295,7 +311,6 @@ fn sample_units(
                 entry: f.object_entry().unwrap_or(0),
                 pos: transforms.get(entity).ok()?.translation(),
                 health: f.unit_health().unwrap_or(0),
-                target: f.unit_target().unwrap_or(0),
                 is_self: Some(entity) == me,
             })
         })
@@ -334,4 +349,49 @@ fn report_in_world(server: Res<Server>, objects: benilla_app::Objects, mut done:
 /// Whether the overlay covers the client.
 pub fn covering(status: &Status, server: &Server) -> bool {
     status.phase != Phase::Ready || server.0.cover.load(Ordering::Relaxed)
+}
+
+/// The movement key the checks hold, as a player would: the binding's own path.
+const WALK_KEY: KeyCode = KeyCode::KeyW;
+
+impl Supervisor {
+    /// Holds the movement key for `hold`, from the next frame.
+    pub(super) fn walk(&self, hold: Duration) {
+        *self.walk.lock().unwrap() = Some(hold);
+    }
+}
+
+/// Presses and releases [`WALK_KEY`] for a walk asked for, as the keyboard does, at the frame's
+/// start: the keyboard message Bevy's input pass turns into the key's state, and the window event
+/// benilla's bindings read in order.
+fn walk(
+    server: Res<Server>,
+    mut input: (
+        MessageWriter<bevy::input::keyboard::KeyboardInput>,
+        MessageWriter<bevy::window::WindowEvent>,
+    ),
+    mut until: Local<Option<Instant>>,
+) {
+    let mut send = |state: bevy::input::ButtonState| {
+        let ev = bevy::input::keyboard::KeyboardInput {
+            key_code: WALK_KEY,
+            logical_key: bevy::input::keyboard::Key::Unidentified(
+                bevy::input::keyboard::NativeKey::Unidentified,
+            ),
+            state,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        };
+        input.0.write(ev.clone());
+        input.1.write(bevy::window::WindowEvent::KeyboardInput(ev));
+    };
+    if let Some(hold) = server.0.walk.lock().unwrap().take() {
+        info!("party: walk key down for {hold:?}");
+        send(bevy::input::ButtonState::Pressed);
+        *until = Some(Instant::now() + hold);
+    } else if until.is_some_and(|t| Instant::now() >= t) {
+        send(bevy::input::ButtonState::Released);
+        *until = None;
+    }
 }

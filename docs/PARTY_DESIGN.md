@@ -477,36 +477,137 @@ Steps:
 
 1. **M1a: build vmangos from source.** Done; see the next section.
 2. **M1b: server `.party swap <name>`.** Done; see the M1b section below.
-3. **benilla-protocol:** parse `SMSG_PARTY_SWAP`, emitted as `SessionEvent::PartySwap { old, new }`.
-4. **benilla-app (E1).** On `PartySwap`:
-   - move `SelfGuid` and `SelfPlayer`;
-   - reseat `Embodied`/`ActiveMover`/`MoverClaim` (claim the new mover);
-   - stop A's local movement and casts;
-   - reset the per-character caches without touching the world;
-   - then `ReloadUI` in place, with the per-character identity pointed at B.
-
-   The world, terrain and objects stay. The burst's re-creates land in place.
-5. **The crate:**
-   - all members are loaded as bots at startup (as now);
-   - F6 sends `.party swap <next>`;
-   - it measures from the key to the server's swap log, to `PartySwap` in the client, to the UI
-     being up.
-
-   The relog switch and its checks are removed. `SessionRequest::Relog` stays for party setup.
-6. **Checks**, kept from the relog M1:
-   - follow and fight by the swapped-away character;
-   - its XP, items and position across swaps;
-   - for both characters, after a swap: unit frame name, action bars, spellbook, bags, quest log
-     and the character sheet;
-   - no `MSG_MOVE_*` sent for the old character after the swap (`WOW_MOVE_TRACE`, tags
-     `out,snd`);
-   - no anticheat or `[CRASH]` lines in `mangosd.out`.
+3. to 6. **M1c: the client swap, F6 and the checks.** Done; see the M1c section below.
 
 **Accept when:**
 - A→B→C→A swaps three full rounds with no loading screen, no world despawn (an entity count
   before and after) and no server error.
 - Each swap is under 1 s, measured from F6 to the UI being up.
 - Screenshots are taken before and after a swap.
+
+**M1c — The client swap.** Done.
+
+- **benilla-protocol:** `SMSG_PARTY_SWAP` (0x400) parses to `ServerPacket::PartySwap` and
+  `SessionEvent::PartySwap { old, new }` (`messages/opcode.rs`, a `Deviation:` row).
+- **benilla-app** (`net/party_swap.rs`, a `Deviation:` module). On `PartySwap`:
+  - `SelfGuid` becomes B, and the `SelfPlayer` tag moves from A's entity to B's (already
+    streamed; a swap to a unit not streamed is refused and logged).
+  - The mover is claimed (`MoverClaim::claim`, `CMSG_SET_ACTIVE_MOVER`) and control set as ours.
+    The existing embodiment (`player/embody.rs`) then re-seats `Embodied`, `ActiveMover`, the
+    camera and the controller by guid, as possession does. A, without `ActiveMover`, goes back to
+    the server-replay lanes.
+  - B's self create in the burst lands in place and runs our arrival (`net/objects/arrival.rs`):
+    the bag cache, reactive spells and the world-enter cascade.
+  - Per-character stores reset on the same event, by their own modules, as at a world entry: the
+    cast state (`spell/net.rs`), the cooldowns as a world load frees them (the burst's
+    `SMSG_INITIAL_SPELLS` appends), and the action-bar slots (`ui_action/net.rs`). The world,
+    terrain and objects stay.
+  - **Per-character identity:** the roster's pick names B. A row is made for B from its
+    descriptor and name when it is on another account, which a party member is. The pick keys
+    the saved variables, macros, add-on enable state and the player record.
+  - `ReloadUI` runs in place (`ReloadUiPending`); it now logs `ReloadUI done in N ms`.
+- **Server, found by M1c:** the swap sends `Group::SendUpdate()` after the burst.
+  `SMSG_GROUP_LIST` lists the others, not oneself, and the client still held the old character's
+  list. Without it, the party frames showed the new character and not the old one.
+- **The crate** (`crates/party`):
+  - F6 sends `.party swap <next>` and waits for the client to play it.
+  - Each swap's time from the key goes to `logs/swap.txt`.
+  - The relog switch and its checks are gone. `.party lead` still runs before `.partybot load`.
+- **Checks** (`PARTY_M1C_TEST=1`, `crates/party/src/server/party/m1c_test.rs`):
+  - **Swaps:** six out of combat (two rounds of the party) and two mid-fight, each through the
+    key's own code path.
+  - **After each swap:**
+    - the client walks the new character on the movement key (W, as a keyboard message);
+    - the server's `.party status` checks who holds the client, the claimed mover, who moved and
+      who follows;
+    - the streamed unit count is compared before and after.
+  - **UI probe** (`WOW_PROBE_LUA_EACH_VM=1`, a dev probe extension that re-runs `WOW_PROBE_LUA` in
+    every new VM): every rebuilt UI logs `UnitName`/`UnitClass`, `PlayerName:GetText()`, the
+    spellbook, the first action slots and bag 0, takes a screenshot, and casts a class spell
+    (mage Frost Armor, priest Lesser Heal).
+  - **Run it with:**
+
+    ```bash
+    PARTY_M1C_TEST=1 WOW_PROBE_LUA="$(cat m1c_probe.lua)" WOW_PROBE_LUA_AT=8 WOW_PROBE_LUA_AGAIN=1 WOW_PROBE_LUA_EACH_VM=1 WOW_UNATTENDED=1 WOW_NOSOUND=1 BENILLA_HOME="$PWD/benilla-config" WOW_PROBE_EXIT_AT=200 ./target/debug/party.exe
+    ```
+
+    `m1c_probe.lua`, the chunk the runs used, trimmed of extra log fields:
+
+    ```lua
+    local n = UnitName("player") or "?"
+    local _, c = UnitClass("player")
+    c = c or "?"
+    local nspells = 0
+    while GetSpellName(nspells + 1, "spell") do nspells = nspells + 1 end
+    local items = 0
+    for s = 1, GetContainerNumSlots(0) or 0 do if GetContainerItemLink(0, s) then items = items + 1 end end
+    ProbeLog("ui player=" .. n .. " class=" .. c .. " frame=" .. (PlayerName and PlayerName:GetText() or "?")
+      .. " spells=" .. nspells .. " spell2=" .. (GetSpellName(2, "spell") or "-")
+      .. " action1=" .. (GetActionTexture(1) or "-") .. " action2=" .. (GetActionTexture(2) or "-")
+      .. " bag0items=" .. items .. " mana=" .. UnitMana("player"))
+    Screenshot()
+    local spells = { MAGE = "Frost Armor", PRIEST = "Lesser Heal" }
+    local f, t, stage, mana0 = CreateFrame("Frame"), 0, 0, UnitMana("player")
+    f:SetScript("OnUpdate", function()
+      t = t + arg1
+      if stage == 0 and t > 2.5 then
+        if spells[c] then
+          CastSpellByName(spells[c])
+          if SpellIsTargeting() then SpellTargetUnit("player") end
+        end
+        stage = 1
+      elseif stage == 1 and t > 5 then
+        local buffs = ""
+        for i = 1, 16 do local b = UnitBuff("player", i) if b then buffs = buffs .. b .. " " end end
+        ProbeLog("after " .. n .. " mana " .. mana0 .. " -> " .. UnitMana("player") .. " buffs " .. buffs)
+        f:SetScript("OnUpdate", nil)
+      end
+    end)
+    ```
+- **Measured** (2026-10-29, debug build):
+  - **Visible switch time:** key to UI up 699–834 ms over eight swaps, in a run with nothing else
+    on the CPU:
+    - key to `SMSG_PARTY_SWAP` handled: 143–214 ms. The crate's 10 ms poll, the chat command, one
+      server tick and the reply.
+    - the in-place `ReloadUI`: 507–568 ms, most of the rest.
+    - client playing B by the bridge's next look: 704–854 ms.
+  - The final run, with clippy compiling alongside, took 855–956 ms.
+- **Checked** (the final run: 42 findings ok, 0 FAIL; earlier runs agree):
+  - **No loading screen:** one `loading screen: up` per run, the world entry's, none for 8 swaps.
+    No world despawn: the streamed count held, 22–29 units across every swap.
+  - **The camera and body:** on the new character in every after-shot.
+  - **The client claims the new mover:** `.party status` reads `mover=<B's guid>` on B's session
+    after every swap.
+  - **Moving:** the new character moved 2.7–14.5 yd under the client's W key.
+  - **Casting:**
+    - the mage's Frost Armor landed on all three of its swaps (mana 165 → 105, the buff present);
+    - the priest's Lesser Heal spent mana each time.
+  - **The old character walks off as a bot:**
+    - `session=bot ai=PartyBotAI leader=<B>`, no client mover, no pending movement acks;
+    - it followed B 4.8–16.4 yd.
+  - **UI per character** (probe, after every swap):
+    - the player frame's name, class, spellbook, action bar (warrior empty; priest Smite and
+      Lesser Heal; mage Fireball and Frost Armor) and bag 0 are the new character's;
+    - both other members are in the party frames (after the `SendUpdate` fix).
+  - **Mid-combat:** in both fights the swapped-away character fought on as a bot and the creature
+    died, at 38 s and 15 s.
+  - **Tests:** benilla-app's tests for the touched modules pass (net, spell, ui_action, probes,
+    ui_script lifecycle, player: 1,291), including three new swap-handler tests and a parse test
+    in benilla-protocol.
+  - **Lint:** `cargo fmt --check` and clippy `-D warnings` on benilla-app, benilla-protocol and
+    party are clean.
+- **Known, not fixed:**
+  - **Per-character files and the account:** saved variables and macros sit under the account
+    the launch logged in with. The same character's files therefore differ by which member the
+    game was launched as. A fix logs in with one fixed account and swaps to the last played
+    member.
+  - **The reload is the cost:** about 0.5 s of the 0.7–0.8 s. M3 (an event-only rebind) is where
+    that goes.
+  - **Lua movement verbs:** in these unattended runs `MoveForwardStart()` from the probe's Lua
+    sent no movement, before any swap too. The checks use the key. Not investigated.
+  - **Unrelated test failure:** benilla-protocol's `auth::tests::the_challenge_carries_the_time_zone_bias`
+    fails on this machine without any M1c change. Windows does not re-read a changed `TZ` within
+    one process.
 
 **M1b — The server swap.** Done, in the fork's branch `party` (`src/game/PlayerBots/PartySwap.cpp`
 and the pieces listed below).

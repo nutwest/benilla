@@ -9,7 +9,10 @@ use crate::net::NetHandlerApp;
 
 pub(super) fn register(app: &mut App) {
     app.net_handler(SessionEventKind::MountResult, on_mount_result)
-        .net_handler(SessionEventKind::Connected, on_game_entry);
+        .net_handler(SessionEventKind::Connected, on_game_entry)
+        // Deviation: a party swap (`crate::net`'s `party_swap`) changes the character with no game
+        // entry; its bar empties as one would.
+        .net_handler(SessionEventKind::PartySwap, on_game_entry);
 }
 
 /// The game entry, at the login's handler ahead of the world's first packet: the bar and its usable
@@ -21,7 +24,10 @@ fn on_game_entry(
     mut slots: ResMut<ActionSlots>,
     mut states: ResMut<super::ActionStateMemory>,
 ) {
-    if let SessionEvent::Connected { .. } = ev {
+    if matches!(
+        ev,
+        SessionEvent::Connected { .. } | SessionEvent::PartySwap { .. }
+    ) {
         slots.game_entry();
         states.game_entry();
     }
