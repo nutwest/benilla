@@ -703,6 +703,13 @@ fn send_spell_cast(
         trade_skill_opens.0.push(spell_id);
         return;
     }
+    // Deviation: no cast while the world is paused, ahead of any state the attempt would arm.
+    if benilla_world::world_clock::is_paused() {
+        refuse!(CastFail::local(
+            spell_id,
+            crate::spell::report::REASON_DONT_REPORT
+        ));
+    }
     if caster_dead(spell_id, def, ctx.rel.self_store) {
         refuse!(CastFail::local(spell_id, REASON_DEAD));
     }

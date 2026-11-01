@@ -1313,6 +1313,15 @@ pub(super) fn writer_loop(
             },
             recv(cmd_rx) -> cmd => {
                 let Ok(cmd) = cmd else { return }; // all app senders dropped → app exit
+                if benilla_world::world_clock::is_paused() && !super::pause_gate::paused_allows(&cmd) {
+                    if benilla_assets::trace::enabled() {
+                        benilla_assets::trace::line(
+                            "wire",
+                            &format!("HELD BACK — paused: {}", wire_trace::dropped(&cmd)),
+                        );
+                    }
+                    continue;
+                }
                 // The read thread installs a writer before it announces the entry, so a command
                 // the app sends on that announcement finds it here even when this wake-up took
                 // the command first, whether no writer is held or a lost link's dead one is.

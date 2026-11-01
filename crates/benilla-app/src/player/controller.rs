@@ -221,7 +221,8 @@ pub(super) fn sample_look(
     // camera rotate (`0x514444`) still runs. The reference never writes the facing; writing and
     // restoring is the same downstream. Standing up hands the camera's yaw back at the next
     // motion sample, a snap, as `0x5103e0` commits the camera's facing rather than a delta.
-    if !mouse_turns_body || lock.control_lost || lock.reseat {
+    let paused = benilla_world::world_clock::is_paused();
+    if !mouse_turns_body || lock.control_lost || lock.reseat || paused {
         player.face_yaw = yaw_before_look;
     }
     // The hand-off runs on each motion and on the press that completes both mouse bits, motion or
@@ -230,7 +231,8 @@ pub(super) fn sample_look(
         hands_off: (looked || input::both_engaged(binds, &rig, both_buttons))
             && mouse_turns_body
             && !lock.control_lost
-            && !lock.reseat,
+            && !lock.reseat
+            && !paused,
         facing: yaw_before_look,
     };
     {
@@ -249,6 +251,7 @@ pub(super) fn sample_look(
 #[allow(clippy::type_complexity)]
 pub(super) fn control(
     time: Res<Time>,
+    frame: Res<benilla_world::frame_pace::FrameStep>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     // Tupled parameters keep this system under Bevy's limit of 16.
@@ -369,7 +372,13 @@ pub(super) fn control(
         view_customised: pointer.6.as_ref().is_some_and(|v| v.current_customised()),
         ..*pointer.3
     };
-    let dt = time.delta_secs();
+    // The camera runs through a pause, when `Res<Time>` stands still.
+    let paused = benilla_world::world_clock::is_paused();
+    let dt = if paused {
+        frame.delta.as_secs_f32()
+    } else {
+        time.delta_secs()
+    };
     // Free fly reads no keys while an EditBox is `typing` (not the per-key `consumed`, a binding's
     // concern); `binds` applied that gate when it latched, and the dev chords ignore it.
     let typing = ui_capture.typing;
@@ -434,7 +443,8 @@ pub(super) fn control(
         && both_buttons
         && mover.mouse_may_turn_body(stunned, stand_state)
         && !world_q.6.control_lost
-        && !world_q.6.reseat;
+        && !world_q.6.reseat
+        && !paused;
     if late_hand_off {
         player.face_yaw = cam.yaw;
     }
@@ -507,8 +517,9 @@ pub(super) fn control(
         //   validates the victim, so this gate is the immobility.
         // - `reseat`: the mover guid is changing and the claimed unit has not streamed in; moves
         //   carry no guid, so driving would write one body's pose onto another.
+        // - a pause: nothing moves, and what the keys hold stays held for the resume.
         // Possession is none of these: it runs the ordinary path below, on the creature.
-        if player.server_riding || world_q.6.control_lost || world_q.6.reseat {
+        if player.server_riding || world_q.6.control_lost || world_q.6.reseat || paused {
             // The latch outlives the yield: lost control and an unresolved reseat leave the tick
             // no unit (`0x51466e`), but a ride keeps the mover and fails `0x5144e0`, so the tick
             // the ride's monster move runs (`0x602053`), and each press's, clears the bit
@@ -555,8 +566,9 @@ pub(super) fn control(
                 },
                 &dynamics,
             );
-            // Flush a stale run once, but never under a ride, whose FORWARD is deliberate.
-            if !player.server_riding {
+            // Flush a stale run once, but never under a ride, whose FORWARD is deliberate, or a
+            // pause, as the server's mover sits it out in the same state.
+            if !player.server_riding && !paused {
                 movement_net::park_mover(&net.0 .0, &mut player);
             }
             // After the park, so a fear's ack carries the stopped word.
