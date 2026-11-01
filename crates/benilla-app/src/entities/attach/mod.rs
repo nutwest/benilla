@@ -274,7 +274,7 @@ pub(super) fn attach_entity_visuals(
     ),
     mut palettes: ResMut<benilla_world::rig_palette::RigPalettes>,
     mut collider_epoch: ResMut<benilla_world::collision::ColliderEpoch>,
-    time: Res<Time>,
+    time: Res<Time<Real>>,
 ) {
     let (
         sections,

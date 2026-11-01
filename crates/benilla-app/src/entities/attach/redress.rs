@@ -94,7 +94,7 @@ pub(in crate::entities) fn redress_player_looks(
         ResMut<benilla_world::doodad_anim::TintAnimMaterials>,
         ResMut<benilla_world::mat_anim_table::MatAnimTable>,
     ),
-    time: Res<Time>,
+    time: Res<Time<Real>>,
 ) {
     let (sections, mut skin_composites, asset_server, mut mats, mut meshes, mut merged, mut images) =
         skin_build;

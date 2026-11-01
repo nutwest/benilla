@@ -307,7 +307,7 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
 /// Apply this frame's [`AuraProc`] edges to the units' node lists.
 pub(crate) fn drain_aura_procs(
     mut edges: MessageReader<AuraProc>,
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut commands: Commands,
     mut nodes: Query<&mut AuraNodes>,
     units: Query<&crate::net::NetEntity>,
@@ -435,7 +435,7 @@ fn display_base_alpha(
 /// `Changed<NetEntity>` stands for its record-change gate (`0x60ae10`); the base compare ignores a
 /// scale-only change.
 pub(crate) fn refresh_base_alpha(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     creatures: Option<Res<crate::entities::Creatures>>,
     mut commands: Commands,
     mut units: Query<
@@ -499,7 +499,7 @@ type AuraParts<'w, 's> = Query<
 /// rerun cannot compound. A cutout or opaque batch ignores instance alpha, so a translucent unit's
 /// parts move to their blend material, keyed on the instance alpha alone.
 pub(crate) fn apply_aura_alpha(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut commands: Commands,
     mut roots: Query<(
         Entity,

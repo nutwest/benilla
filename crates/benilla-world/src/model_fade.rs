@@ -72,7 +72,7 @@ pub fn fade_band(radius: f32) -> Option<(f32, f32)> {
 /// behind ([`DespawnFade`]). The interior classifier keeps the light law through either.
 #[derive(Component, Clone)]
 pub struct RenderFade {
-    /// `Time::elapsed_secs` the ramp runs from: its arming, or an appear ramp's arrival.
+    /// `Time<Real>::elapsed_secs` the ramp runs from: its arming, or an appear ramp's arrival.
     pub started: f32,
     /// Seconds; both reference ramps are 2000 ms (`FadeTo`'s `0x7d0`, the pump's `age > 0x7d0`).
     pub duration: f32,
@@ -102,7 +102,8 @@ impl RenderFade {
     }
 }
 
-/// The appear fade's length, `FadeTo(1.0, 2000 ms)` on the wall clock (`OsGetAsyncTimeMs`).
+/// The appear fade's length, `FadeTo(1.0, 2000 ms)` on the wall clock (`OsGetAsyncTimeMs`), here
+/// `Time<Real>`, so a unit created while the world is paused still fades in.
 pub const APPEAR_FADE_SECS: f32 = 2.0;
 
 impl RenderFade {
@@ -225,7 +226,7 @@ pub fn model_render_alpha(
 #[derive(bevy::ecs::system::SystemParam)]
 #[allow(clippy::type_complexity)] // one query, the four facets of a unit's presentation
 pub struct UnitRenderAlpha<'w, 's> {
-    time: Res<'w, Time>,
+    time: Res<'w, Time<Real>>,
     viewer: Res<'w, crate::view::Viewer>,
     units: Query<
         'w,
@@ -262,7 +263,7 @@ mod unit_render_alpha_tests {
 
     fn unit_at(now: f32, build: impl FnOnce(&mut bevy::ecs::world::EntityWorldMut)) -> f32 {
         let mut world = World::new();
-        let mut time = Time::<()>::default();
+        let mut time = Time::<Real>::default();
         time.advance_by(std::time::Duration::from_secs_f32(now));
         world.insert_resource(time);
         world.insert_resource(crate::view::Viewer::default());
@@ -353,7 +354,7 @@ mod unit_render_alpha_tests {
     #[test]
     fn an_unreadable_owner_is_opaque() {
         let mut world = World::new();
-        world.insert_resource(Time::<()>::default());
+        world.insert_resource(Time::<Real>::default());
         world.insert_resource(crate::view::Viewer::default());
         let gone = world.spawn_empty().id();
         world.despawn(gone);
@@ -367,7 +368,7 @@ mod unit_render_alpha_tests {
 /// An object that never faded gets none.
 #[allow(clippy::type_complexity)] // one query, five optional facets of the same entity
 pub(crate) fn publish_model_alpha(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     viewer: Res<crate::view::Viewer>,
     mut commands: Commands,
     mut units: Query<
@@ -448,7 +449,7 @@ pub fn self_model_fade_alpha(dist: f32, nearclip: f32, window: f32) -> f32 {
 /// a part that classifies mid-ramp follows its room, and remove an appear fade once opaque.
 #[allow(clippy::type_complexity)]
 pub fn apply_render_fade(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut commands: Commands,
     // The water-plane axis, composed into this writer's pick (`far_resolved`) so the ramp and the
     // classifier derive the same handle instead of re-swapping.
@@ -503,9 +504,9 @@ pub fn apply_render_fade(
 /// so it never plays behind one.
 #[derive(Component, Clone)]
 pub struct PendingAppearFade {
-    /// `Time::elapsed_secs` when the part began waiting, the backstop timeout's origin.
+    /// `Time<Real>::elapsed_secs` when the part began waiting, the backstop timeout's origin.
     pub since: f32,
-    /// `Time::elapsed_secs` at the object's arrival, the ramp's origin once the world is shown.
+    /// `Time<Real>::elapsed_secs` at the object's arrival, the ramp's origin once the world is shown.
     pub arrived: f32,
 }
 
@@ -547,7 +548,7 @@ pub fn join_unit_appear_fade(unit: Option<UnitAppearFade>) -> JoinedFade {
 /// Arm each [`PendingAppearFade`] once the loading screen stops covering the world, or after
 /// [`PENDING_TIMEOUT_SECS`], and advance each root's [`UnitAppearFade`] on the same instant.
 pub(crate) fn arm_appear_fade(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     viewer: Res<crate::view::Viewer>,
     mut commands: Commands,
     q: Query<(
@@ -607,7 +608,7 @@ pub(crate) fn arm_appear_fade(
 
 /// Drop a [`UnitAppearFade::Live`] once its ramp has run, so a later part spawns steady.
 pub(crate) fn retire_unit_appear_fade(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut commands: Commands,
     q: Query<(Entity, &UnitAppearFade)>,
 ) {
@@ -760,7 +761,7 @@ impl DespawnFade {
 /// [`crate::entities::BoneAttach`]) and on the billboard cards following it, then despawn after
 /// [`APPEAR_FADE_SECS`]; with nothing fadeable, despawn at once.
 pub(crate) fn apply_despawn_fade(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut commands: Commands,
     mut q: Query<(Entity, &mut DespawnFade)>,
     children_of: Query<&Children>,
@@ -1051,7 +1052,7 @@ mod tests {
             .id();
 
         let mut state: SystemState<(
-            Res<Time>,
+            Res<Time<Real>>,
             Res<crate::view::Viewer>,
             Commands,
             Query<(

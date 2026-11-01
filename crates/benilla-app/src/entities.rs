@@ -472,7 +472,7 @@ pub(crate) struct Arrival(pub(crate) f32);
 /// Stamp each net entity's [`Arrival`] the frame it streams in.
 fn stamp_arrivals(
     mut commands: Commands,
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     arrived: Query<Entity, (Added<NetEntity>, Without<Arrival>)>,
 ) {
     let now = time.elapsed_secs();

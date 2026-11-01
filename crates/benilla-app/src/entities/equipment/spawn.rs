@@ -117,7 +117,7 @@ pub(in crate::entities) fn attach_held_items(
         Without<benilla_world::model_fade::DespawnFade>,
     >,
     held: Option<Res<ItemDisplays>>,
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut seats: SeatWriters,
     // A move keeps the item alive but changes the bone its palette frame is composed from.
     mut movers: Query<&mut benilla_world::rig_rider::RigRider>,
