@@ -961,12 +961,15 @@ pub(crate) mod schedule_tests {
     ///   too, meets the same way, none a host;
     /// - the minimap's draw (`minimap::emit_minimap`), which reads `QuestGiver`'s dialog statuses,
     ///   against `ui_panes::feed_character_panes`, which lends the call host, whose quest verbs
-    ///   write that window's cell and panel latches and never a status.
+    ///   write that window's cell and panel latches and never a status;
+    /// - the party swap's glide (`player::swap_blend::apply_swap_blend`), which offsets the world
+    ///   camera for 0.25 s after a swap: against the cinematic's camera writers, which no swap
+    ///   meets, and the art scope and WDL stream, which read it, a frame's glide either way.
     ///
     /// Raising the ceiling is a claim that a new undeclared order is acceptable: make it with the
     /// reason read off the dump, or declare the order (`.after`, a set, a `chain`). A resource
     /// that commutes by construction belongs in [`Classes`].
-    const UPDATE_ACTIONABLE_CEILING: usize = 1_467;
+    const UPDATE_ACTIONABLE_CEILING: usize = 1_469;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

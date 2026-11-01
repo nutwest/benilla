@@ -384,6 +384,7 @@ impl Plugin for PlayerPlugin {
             Update,
             swap_blend::apply_swap_blend
                 .after(control)
+                .before(crate::camera_shake::apply_camera_shake)
                 .in_set(WorldStage::Input)
                 .in_set(crate::client_state::InWorldGated),
         )

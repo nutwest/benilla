@@ -183,7 +183,10 @@ fn arrival(world: &mut World, control_gained: bool) {
     apply_form_edits(world);
     // Deviation: a party swap's arrival (`crate::net`'s `party_swap`) rebinds the UI to the new
     // character by its events, where the reference enters the world anew.
-    if std::mem::take(&mut world.resource_mut::<PartyRebindOwed>().0) {
+    let rebind = world
+        .get_resource_mut::<PartyRebindOwed>()
+        .is_some_and(|mut owed| std::mem::take(&mut owed.0));
+    if rebind {
         // The player record `UnitName`/`UnitClass("player")` answer, made as a load makes it from
         // the pick's roster row: here the new character's row, which the swap made.
         let row = world
