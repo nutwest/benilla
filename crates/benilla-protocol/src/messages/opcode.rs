@@ -104,6 +104,9 @@ pub const SMSG_LOGIN_VERIFY_WORLD: u16 = 0x0236;
 /// ahead of the new character's login burst: `u64` old player guid, `u64` new player guid. It lies
 /// past the 1.12 table (`NUM_MSG_TYPES` 828), so no stock server sends it.
 pub const SMSG_PARTY_SWAP: u16 = 0x0400;
+/// Deviation: not a 1.12 opcode. The fork's `.party pause` sends it with the world's pause state:
+/// `u8` paused, `u32` server ms. Past the 1.12 table, as [`SMSG_PARTY_SWAP`].
+pub const SMSG_PARTY_PAUSE: u16 = 0x0401;
 /// The account's tutorial bits: the whole body (32 bytes from vmangos after login), copied into
 /// both of the client's banks. No tutorial fires before it arrives.
 pub const SMSG_TUTORIAL_FLAGS: u16 = 0x00FD; // 253

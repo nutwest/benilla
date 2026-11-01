@@ -380,6 +380,8 @@ pub enum SessionEvent {
     /// `SMSG_PARTY_SWAP` (the party's vmangos fork): the client plays `new` from here, `old` stays
     /// in the world as a party bot, and `new`'s login burst follows with no world entry.
     PartySwap { old: u64, new: u64 },
+    /// `SMSG_PARTY_PAUSE` (the party's vmangos fork): the world is paused or running, as of here.
+    PartyPause { paused: bool },
     /// `SMSG_NEW_WORLD` (acked) or the login `SMSG_LOGIN_VERIFY_WORLD`. After a transfer that
     /// named a transport the pose is boat-local (vmangos `SendNewWorld` sends `GetTransportPos()`).
     Worldport {

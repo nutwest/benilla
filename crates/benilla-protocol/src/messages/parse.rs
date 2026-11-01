@@ -393,6 +393,10 @@ fn parse_server_body(
             old: read_u64_le(&mut r)?,
             new: read_u64_le(&mut r)?,
         },
+        opcode::SMSG_PARTY_PAUSE => ServerPacket::PartyPause {
+            paused: read_u8(&mut r)? != 0,
+            server_ms: read_u32_le(&mut r)?,
+        },
         opcode::SMSG_LOGIN_VERIFY_WORLD => {
             let map = read_u32_le(&mut r)?;
             let position = Vector3d::read(&mut r)?;
@@ -1871,6 +1875,23 @@ mod tests {
         assert_eq!(tail, 0);
         assert!(
             parse_server(opcode::SMSG_PARTY_SWAP, &body[..12]).is_err(),
+            "a short body fails"
+        );
+    }
+
+    #[test]
+    fn the_party_pause_notice_parses() {
+        let mut body = vec![1u8];
+        body.extend(4242u32.to_le_bytes());
+        assert!(matches!(
+            parse_server(opcode::SMSG_PARTY_PAUSE, &body),
+            Ok(ServerPacket::PartyPause {
+                paused: true,
+                server_ms: 4242
+            })
+        ));
+        assert!(
+            parse_server(opcode::SMSG_PARTY_PAUSE, &body[..3]).is_err(),
             "a short body fails"
         );
     }

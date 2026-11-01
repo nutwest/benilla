@@ -183,6 +183,11 @@ pub enum ServerPacket {
         old: u64,
         new: u64,
     },
+    /// [`super::opcode::SMSG_PARTY_PAUSE`]: the world's pause state, a refused request included.
+    PartyPause {
+        paused: bool,
+        server_ms: u32,
+    },
     LoginVerifyWorld {
         map: u32,
         position: Vector3d,
@@ -1357,6 +1362,7 @@ impl ServerPacket {
             ServerPacket::TransferAborted { .. } => "SMSG_TRANSFER_ABORTED".into(),
             ServerPacket::LoginVerifyWorld { .. } => "SMSG_LOGIN_VERIFY_WORLD".into(),
             ServerPacket::PartySwap { .. } => "SMSG_PARTY_SWAP".into(),
+            ServerPacket::PartyPause { .. } => "SMSG_PARTY_PAUSE".into(),
             ServerPacket::TimeSpeed { .. } => "SMSG_LOGIN_SETTIMESPEED".into(),
             ServerPacket::GameSpeedSet { .. } => "SMSG_GAMESPEED_SET".into(),
             ServerPacket::GameTimeUpdate { .. } => "SMSG_GAMETIME_UPDATE".into(),

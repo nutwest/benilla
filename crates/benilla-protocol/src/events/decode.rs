@@ -734,6 +734,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             needs_ack: true,
         }],
         ServerPacket::PartySwap { old, new } => vec![SessionEvent::PartySwap { old, new }],
+        ServerPacket::PartyPause { paused, .. } => vec![SessionEvent::PartyPause { paused }],
         ServerPacket::LoginVerifyWorld {
             map,
             position,
