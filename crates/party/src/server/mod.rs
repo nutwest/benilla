@@ -94,6 +94,8 @@ pub struct Supervisor {
     self_guid: AtomicU64,
     /// A walk forward the checks asked for: how long to hold the key, not yet begun.
     walk: Mutex<Option<Duration>>,
+    /// The jump key's press, for the checks.
+    jump: AtomicBool,
     /// The units the client streams, sampled by the app.
     units: Mutex<Vec<UnitSnap>>,
 }
@@ -117,6 +119,7 @@ impl Supervisor {
             virtual_key: AtomicBool::new(false),
             self_guid: AtomicU64::new(0),
             walk: Mutex::default(),
+            jump: AtomicBool::new(false),
             units: Mutex::default(),
         }
     }
@@ -286,8 +289,10 @@ fn bridge(
     // which the server takes sooner than a say; the controller then sees it through.
     if pressed {
         if let Some(name) = sup.next_swap.lock().unwrap().clone() {
+            // The client alone knows a fall: the server holds the old character for its landing.
+            let air = if benilla_app::mid_air() { " air" } else { "" };
             session.write(benilla_app::SessionRequest::PartyCommand(format!(
-                ".party swap {name}"
+                ".party swap {name}{air}"
             )));
             *sup.switch_key.lock().unwrap() = Some(Instant::now());
         }
@@ -313,7 +318,10 @@ fn sample_units(
     if now < *next {
         return;
     }
-    *next = now + 0.25;
+    // The fall checks read a body's arc, a frame at a time.
+    static EVERY_FRAME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let every_frame = *EVERY_FRAME.get_or_init(|| std::env::var_os("PARTY_FALL_TEST").is_some());
+    *next = now + if every_frame { 0.0 } else { 0.25 };
     let me = objects.player();
     const TYPEMASK_UNIT: u32 = 0x8;
     let units = objects
@@ -369,6 +377,11 @@ pub fn covering(status: &Status, server: &Server) -> bool {
 const WALK_KEY: KeyCode = KeyCode::KeyW;
 
 impl Supervisor {
+    /// Taps the jump key, from the next frame.
+    pub(super) fn jump(&self) {
+        self.jump.store(true, Ordering::Relaxed);
+    }
+
     /// Holds the movement key for `hold`, from the next frame.
     pub(super) fn walk(&self, hold: Duration) {
         *self.walk.lock().unwrap() = Some(hold);
@@ -385,10 +398,11 @@ fn walk(
         MessageWriter<bevy::window::WindowEvent>,
     ),
     mut until: Local<Option<Instant>>,
+    mut jumping: Local<bool>,
 ) {
-    let mut send = |state: bevy::input::ButtonState| {
+    let mut send = |key_code: KeyCode, state: bevy::input::ButtonState| {
         let ev = bevy::input::keyboard::KeyboardInput {
-            key_code: WALK_KEY,
+            key_code,
             logical_key: bevy::input::keyboard::Key::Unidentified(
                 bevy::input::keyboard::NativeKey::Unidentified,
             ),
@@ -400,12 +414,18 @@ fn walk(
         input.0.write(ev.clone());
         input.1.write(bevy::window::WindowEvent::KeyboardInput(ev));
     };
+    if std::mem::take(&mut *jumping) {
+        send(KeyCode::Space, bevy::input::ButtonState::Released);
+    } else if server.0.jump.swap(false, Ordering::Relaxed) {
+        send(KeyCode::Space, bevy::input::ButtonState::Pressed);
+        *jumping = true;
+    }
     if let Some(hold) = server.0.walk.lock().unwrap().take() {
         info!("party: walk key down for {hold:?}");
-        send(bevy::input::ButtonState::Pressed);
+        send(WALK_KEY, bevy::input::ButtonState::Pressed);
         *until = Some(Instant::now() + hold);
     } else if until.is_some_and(|t| Instant::now() >= t) {
-        send(bevy::input::ButtonState::Released);
+        send(WALK_KEY, bevy::input::ButtonState::Released);
         *until = None;
     }
 }

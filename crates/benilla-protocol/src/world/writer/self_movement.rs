@@ -41,6 +41,15 @@ impl WorldWriter {
         self.send(opcode::CMSG_SET_ACTIVE_MOVER, &messages::full_guid(guid))
     }
 
+    /// `CMSG_PARTY_LANDED`: a character swapped away in the air has landed.
+    pub fn party_landed(&mut self, guid: u64, position: [f32; 3], orientation: f32) -> Result<()> {
+        let mut body = guid.to_le_bytes().to_vec();
+        for v in [position[0], position[1], position[2], orientation] {
+            body.extend(v.to_le_bytes());
+        }
+        self.send(opcode::CMSG_PARTY_LANDED, &body)
+    }
+
     /// `CMSG_FAR_SIGHT`, one `u8`: 1 when the view attaches, 0 when it releases (reference:
     /// `0x5ee290`). It names no object; the server reads its own `PLAYER_FARSIGHT`.
     pub fn far_sight(&mut self, engage: bool) -> Result<()> {

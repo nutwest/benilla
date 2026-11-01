@@ -1400,6 +1400,11 @@ pub(super) fn writer_loop(
                         transport,
                     ),
                     ClientCommand::SetActiveMover { guid } => w.set_active_mover(guid),
+                    ClientCommand::PartyLanded {
+                        guid,
+                        position,
+                        orientation,
+                    } => w.party_landed(guid, position, orientation),
                     ClientCommand::NotActiveMover {
                         guid,
                         flags,

@@ -54,6 +54,7 @@ pub(super) fn paused_allows(cmd: &ClientCommand) -> bool {
         ClientCommand::MoveSplineDone { .. }
         | ClientCommand::ForceSpeedAck { .. }
         | ClientCommand::SetActiveMover { .. }
+        | ClientCommand::PartyLanded { .. }
         | ClientCommand::NotActiveMover { .. }
         | ClientCommand::FarSight { .. }
         | ClientCommand::TeleportAck { .. }

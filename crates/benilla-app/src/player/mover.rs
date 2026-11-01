@@ -701,6 +701,18 @@ pub(crate) fn fall_step(v0: f32, dt: f32, terminal: f32) -> (f32, f32) {
     (-terminal, displacement / dt)
 }
 
+/// Whether a falling capsule at `center` has met walkable ground, by the local mover's landing
+/// reach ([`LAND_PROBE`]). The dead-reckon's party falls land by it.
+pub(crate) fn land_contact(
+    world: &benilla_world::collision::WorldCollision<'_, '_>,
+    capsule: &Collider,
+    center: Vec3,
+) -> bool {
+    world
+        .cast_mover(capsule, center, Vec3::NEG_Y * LAND_PROBE, SKIN_WIDTH)
+        .is_some_and(|hit| hit.face_normal.y >= GROUND_COS)
+}
+
 /// One airborne step against the world: the arc's slide alone, with steep faces sheared
 /// ([`steep_contact_shear`]); gravity owns the height and the next ground probe the landing.
 /// Shared with the remote dead-reckon's arcs ([`crate::net::motion::remote`]).

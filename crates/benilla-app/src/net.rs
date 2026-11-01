@@ -55,6 +55,8 @@ pub(crate) use party_pause::{
     note_press as note_binding_press,
 };
 pub use party_pause::{enable_world_pause, world_paused};
+pub use party_swap::mid_air;
+pub(crate) use party_swap::note_mid_air;
 
 pub(crate) use io::LoginRequest;
 use motion::{
@@ -1063,6 +1065,13 @@ pub(crate) enum ClientCommand {
     /// `MSG_MOVE_*` for an unconfirmed mover.
     SetActiveMover {
         guid: u64,
+    },
+    /// `CMSG_PARTY_LANDED` (the party's vmangos fork): a character swapped away in the air has
+    /// landed here.
+    PartyLanded {
+        guid: u64,
+        position: [f32; 3],
+        orientation: f32,
     },
     /// `CMSG_MOVE_NOT_ACTIVE_MOVER`: the server re-broadcasts a stop from this pose.
     NotActiveMover {

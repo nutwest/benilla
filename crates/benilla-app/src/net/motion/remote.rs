@@ -39,6 +39,43 @@ pub(crate) struct RemoteMotion {
     /// since is our extrapolation.
     pub(crate) last_apply_ms: f64,
     pub(crate) last_apply_pos: [f32; 3],
+    /// The fall this mover was swapped away in, when it is one.
+    pub(crate) party_fall: Option<PartyFall>,
+}
+
+/// Deviation: 1.12 never hands a client's body to the server in mid-air. A party swap
+/// (`crate::net`'s `party_swap`) does, and only the client knows the arc, so the old character's
+/// fall finishes here. It flies on this dead-reckon, on the world clock, so a pause holds it, and
+/// lands by [`crate::player::mover::land_contact`], which the wire otherwise tells a remote.
+/// Nothing the server sends moves the body meanwhile, and `CMSG_PARTY_LANDED` ends the server's
+/// hold on the character.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PartyFall {
+    /// When it began, on the world clock's milliseconds.
+    pub(crate) since_ms: f64,
+    /// Frames in a row that fell less than gravity asks, a body wedged between steep faces.
+    pub(crate) stalled: u8,
+}
+
+impl PartyFall {
+    /// The stalled frames that end a fall, as [`crate::player::mover`] rests a wedged body.
+    const WEDGED: u8 = 3;
+    /// What a relayed move must wait for: a move the old client's session had queued can land
+    /// right after the swap, and only the server's fallback comes later.
+    const STALE_MOVES_MS: f64 = 1000.0;
+
+    /// Whether a relayed move arriving at `now_ms` is older than the fall, and goes unapplied.
+    pub(crate) fn drops_move(&self, now_ms: f64) -> bool {
+        now_ms - self.since_ms < Self::STALE_MOVES_MS
+    }
+
+    /// One frame's descent of `drop` yd falling at `vertical` yd/s for `dt` s; whether the body
+    /// has stopped falling against what holds it.
+    fn wedged(&mut self, drop: f32, vertical: f32, dt: f32) -> bool {
+        let stalled = vertical < -1.0 && drop < -vertical * dt * 0.15;
+        self.stalled = if stalled { self.stalled + 1 } else { 0 };
+        self.stalled >= Self::WEDGED
+    }
 }
 
 /// A relayed pose's height in both frames its packet carries: the world's, and the deck's while
@@ -359,6 +396,11 @@ pub(in crate::net) fn extrapolate_remote_units(
     // Liquid is queried, not swept, so a water-walker's plane is handed to the step.
     points: benilla_world::world_point::WorldPoint,
     capsule: Res<crate::player::PlayerCapsule>,
+    // A party fall's landing report and its grunt.
+    (net, mut landings): (
+        Option<Res<crate::net::NetCommands>>,
+        Option<ResMut<Messages<crate::creature_anim::HardLanding>>>,
+    ),
     // The runaway watch's last reported silent second per mover.
     mut warned: Local<bevy::platform::collections::HashMap<Entity, u32>>,
     // When each mover last wrote a `rem` line.
@@ -499,10 +541,23 @@ pub(in crate::net) fn extrapolate_remote_units(
         } else if latched {
             commands.entity(e).remove::<super::FacingStep>();
         }
+        let was_z = rm.wow_pos[2];
         rm.wow_pos = pos;
         rm.orientation = orientation;
         rm.vertical_velocity = vertical_velocity;
         rm.speed = speed;
+        if dt > 0.0 && rm.party_fall.is_some() {
+            land_party_fall(
+                &mut rm,
+                was_z,
+                dt,
+                &world,
+                &capsule.0,
+                &points,
+                (e, guid.map_or(0, |g| g.0), now_ms),
+                (net.as_deref(), landings.as_deref_mut()),
+            );
+        }
         if benilla_assets::trace::enabled()
             && sampled
                 .get(&e)
@@ -547,6 +602,110 @@ pub(in crate::net) fn extrapolate_remote_units(
                 twist.yaw_gap = gap;
             }
         }
+    }
+}
+
+/// Ends `rm`'s party fall when the body has met the ground or water, or is wedged, and reports it.
+#[allow(clippy::too_many_arguments)]
+fn land_party_fall(
+    rm: &mut RemoteMotion,
+    was_z: f32,
+    dt: f32,
+    world: &benilla_world::collision::WorldCollision<'_, '_>,
+    capsule: &avian3d::prelude::Collider,
+    points: &benilla_world::world_point::WorldPoint,
+    (entity, guid, now_ms): (Entity, u64, f64),
+    (net, landings): (
+        Option<&crate::net::NetCommands>,
+        Option<&mut Messages<crate::creature_anim::HardLanding>>,
+    ),
+) {
+    let Some(mut fall) = rm.party_fall else {
+        return;
+    };
+    let center = wow_to_bevy(rm.wow_pos) + Vec3::Y * (crate::player::CAPSULE_HEIGHT * 0.5);
+    let grounded =
+        rm.vertical_velocity <= 0.0 && crate::player::mover::land_contact(world, capsule, center);
+    let in_water = points
+        .liquid_at(
+            benilla_world::world_point::Subject::Unit(entity),
+            rm.wow_pos,
+        )
+        .is_some_and(|hit| hit.surface_z >= rm.wow_pos[2]);
+    let wedged = fall.wedged(was_z - rm.wow_pos[2], rm.vertical_velocity, dt);
+    if !(grounded || in_water || wedged) {
+        rm.party_fall = Some(fall);
+        return;
+    }
+    let here = FallHeight {
+        world_z: rm.wow_pos[2],
+        aboard: None,
+    };
+    let (_, descent) = fall_arc_step(true, false, rm.fall_start, here);
+    if let (Some(descent), Some(landings)) = (descent, landings) {
+        landings.write(crate::creature_anim::HardLanding { entity, descent });
+    }
+    rm.party_fall = None;
+    rm.fall_start = None;
+    rm.flags = 0;
+    rm.vertical_velocity = 0.0;
+    rm.jump_xy_vel = [0.0; 2];
+    rm.speed = 0.0;
+    rm.last_apply_ms = now_ms;
+    rm.last_apply_pos = rm.wow_pos;
+    info!(
+        "net: party fall {guid:#x} landed after {:.0} ms at {:?}",
+        now_ms - fall.since_ms,
+        rm.wow_pos
+    );
+    if let Some(net) = net {
+        let _ = net.0.send(crate::net::ClientCommand::PartyLanded {
+            guid,
+            position: rm.wow_pos,
+            orientation: rm.orientation,
+        });
+    }
+}
+
+#[cfg(test)]
+mod party_fall_tests {
+    use super::PartyFall;
+
+    fn fall() -> PartyFall {
+        PartyFall {
+            since_ms: 1000.0,
+            stalled: 0,
+        }
+    }
+
+    #[test]
+    fn only_a_held_body_falling_hard_reads_as_wedged() {
+        let mut f = fall();
+        for _ in 0..10 {
+            assert!(!f.wedged(0.2, -10.0, 0.016 * 1.0), "free fall descends");
+        }
+        for _ in 0..10 {
+            assert!(!f.wedged(0.0, -0.5, 0.016), "an apex barely falls");
+        }
+        assert!(!f.wedged(0.0, -10.0, 0.016));
+        assert!(!f.wedged(0.0, -10.0, 0.016));
+        assert!(f.wedged(0.0, -10.0, 0.016), "three stalled frames end it");
+    }
+
+    #[test]
+    fn a_descent_clears_the_count() {
+        let mut f = fall();
+        assert!(!f.wedged(0.0, -10.0, 0.016));
+        assert!(!f.wedged(0.0, -10.0, 0.016));
+        assert!(!f.wedged(0.2, -10.0, 0.016));
+        assert_eq!(f.stalled, 0);
+    }
+
+    #[test]
+    fn queued_moves_are_dropped_and_the_servers_fallback_is_not() {
+        let f = fall();
+        assert!(f.drops_move(1500.0), "what the old client had queued");
+        assert!(!f.drops_move(31_000.0), "the 30 s hold's heartbeat");
     }
 }
 
@@ -730,6 +889,7 @@ mod under_floor {
             relay: RelayChain::default(),
             last_apply_ms: 0.0,
             last_apply_pos: [0.0, 0.0, wow_z],
+            party_fall: None,
         }
     }
 

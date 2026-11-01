@@ -852,12 +852,18 @@ fn object_create(
     // `WOW_CREATE_SPLINE=off` run still records what the wire offered.
     trace_create_spline(guid, spline.as_ref());
     let walk = spline.and_then(create_spline);
+    let party_fall = matches!(landing, Landing::Live(e)
+        if sc.remote.get(e).is_ok_and(|rm| rm.party_fall.is_some()));
     let commands = &mut sc.commands;
     match landing {
         Landing::Live(e) => {
             // A re-create is a fresh snapshot: refresh identity and a unit's pose, drop any
-            // extrapolation.
-            commands.entity(e).insert(net).remove::<RemoteMotion>();
+            // extrapolation. A party swap's burst re-creates the old character, whose fall the
+            // server knows nothing of, so that one flies on.
+            commands.entity(e).insert(net);
+            if !party_fall {
+                commands.entity(e).remove::<RemoteMotion>();
+            }
             // The set is replaced whole; a `SMSG_FORCE_*_SPEED_CHANGE` in the same tick lands on
             // top, since this insert applies before the next packet's handler
             // (`apply::seam_tests`).
@@ -896,7 +902,7 @@ fn object_create(
             // Only a unit takes the block's movement (type-mask bit 3, `0x46638c`); any other type
             // reads the position and drops it (`0x4664c3`..`0x46656b`), so it stays where it
             // stands.
-            if matches!(kind, EntityKind::Unit | EntityKind::Player) {
+            if matches!(kind, EntityKind::Unit | EntityKind::Player) && !party_fall {
                 write_pose(commands, &mut sc.transforms, e, position, placement);
             }
             e
@@ -1035,6 +1041,14 @@ fn unit_move(
             // packet off the live `[esi+0x40]`/`[esi+0x150]`.
             let (flags, queue_empty) = (rm.flags, rm.pending.is_empty());
             let fire_ms = rm.relay.schedule(mv.wire_ms, now_ms, flags, queue_empty);
+            // A party fall is the client's until it lands; only the server's fallback outlasts
+            // the old client's queued moves.
+            if let Some(fall) = rm.party_fall {
+                if fall.drops_move(now_ms) {
+                    return;
+                }
+                rm.party_fall = None;
+            }
             let at_arrival = arrival_snap() || rm.fires_at_arrival(fire_ms, now_ms);
             trace_relay(
                 guid,
@@ -1070,6 +1084,7 @@ fn unit_move(
                 relay: Default::default(),
                 last_apply_ms: now_ms,
                 last_apply_pos: mv.position,
+                party_fall: None,
             };
             let fire_ms = rm.relay.schedule(mv.wire_ms, now_ms, 0, true);
             debug_assert_eq!(fire_ms, now_ms, "a seeding packet fires at arrival");
@@ -2736,6 +2751,7 @@ mod tests {
                 relay: Default::default(),
                 last_apply_ms: 0.0,
                 last_apply_pos: [0.0; 3],
+                party_fall: None,
             }
         }
 

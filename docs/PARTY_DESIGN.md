@@ -494,8 +494,44 @@ nothing to walk and adjust on resume.
   should.
 - **Client:** with no clock moving, the UI's cooldowns and auras must seed from the frozen clock,
   which the `Instant` plan gives. The camera glide stays on real time.
-- **Check first:** the swap's `StopMoving` on the new character while it's mid-spline. Its stop
-  packet should land it where the paused sample already shows it.
+
+**A swap in mid-air.** A player's jump or fall is the client's: nothing on the server flies it. So
+a swap handed the old character to a server with no arc to follow, and its stop put the body on
+the ground. Now the fall finishes where it started.
+
+- **The key says so.** `.party swap <name> air`, when the played character is in the air. Only the
+  client can tell: a step off a ledge may not have reached the server yet.
+- **The server holds.** For an `air` swap it skips the old character's `StopMoving` and starts its
+  new `PartyBotAI` with `m_fallHeld` set, so the AI's update does nothing. The hold's 30 s deadline
+  is in world time, so a pause holds it too.
+- **The client flies the body.** `Player::air_seed` hands the arc to the old body's `RemoteMotion`,
+  whose dead-reckon already flies arcs with `fall_step` and `airborne_step`, on the world clock, so
+  a pause freezes it. It covers whatever began the fall: a jump, a ledge, a knockback.
+- **Nothing the server sends moves it.** The burst's re-create of the old character leaves its pose
+  and `RemoteMotion` alone, and relayed moves are dropped for the first second, which is as long
+  as the old client's queued moves can last.
+- **Landing.** `land_party_fall` ends the fall on walkable ground (`land_contact`, the local
+  mover's `LAND_PROBE`), in water, or wedged for three frames. It plays the landing and sends
+  `CMSG_PARTY_LANDED` (0x402: guid, x, y, z, orientation).
+- **The server applies it.** `PartyLanded` sets the position, applies fall damage by height through
+  `HandleFall`, clears the movement flags and releases the AI.
+- **Fallback.** With no landing by the deadline, `UpdatePartyFalls` puts the character on the
+  ground below and sends a heartbeat, which the client takes as the end of its fall.
+- **Landed already.** A body on the ground at the swap's notice sends `CMSG_PARTY_LANDED` at once:
+  it may have landed since the key asked for the hold. The server ignores a landing it isn't
+  holding for.
+- **A character in the air can't be swapped back to** until it lands: the swap is refused with
+  "that character is in the air".
+- **Known gap:** a jump in the 60 ms between the key and the swap's notice isn't held, so that body
+  flies on the client while the server's stop and bot AI run.
+
+**Swimming and transports**, from reading the code, not run:
+- **Swimming:** not broken the same way. A swimmer has no arc, and `StopMoving` leaves it at the last
+  position the server had, at depth.
+- **On a transport, on the deck:** not broken. The re-create carries the rider's deck pose.
+- **Jumping on a transport's deck: not fixed.** It is the same bug: the swap stops the body on the
+  deck at once. The arc is deck-local, which the dead-reckon doesn't resolve, so `air_seed` declines
+  it, and the swap goes through as it always did.
 
 **RTS camera (M5).** A second key, usable paused or unpaused. Pausing alone leaves the camera where
 it is. Unpaused the world runs on, and the character stands still while the camera has the
@@ -1106,6 +1142,14 @@ and the pieces listed below).
      gate, the banner and the resume are covered by unit tests alone until the playtest.
 5. **F6 while paused.** Swap around the party during a pause, and confirm the mover claim lands on
    resume and that a unit the burst creates fades in (§2.2).
+   - **Checked** in part (2026-11-01, one run, `PARTY_FALL_TEST=1`,
+     `crates/party/src/server/party/fall_test.rs`, `logs/fall-checks.txt`, 10 findings, 0 failed):
+     - **Swapped mid-jump, running:** the old body flew on for 622 ms, peaked 1.64 yd up and ended
+       0.02 yd from the ground. The server heard the landing, and it is a bot again.
+     - **Swapped mid-jump, paused:** it held 1.14 yd up for 3 s with no drift across 366 samples,
+       took up the arc 0.00 yd from there at the resume, flew 648 ms and landed. The mover claim
+       landed on resume.
+     - **Not run:** ledge falls, knockbacks, the 30 s fallback, fall damage.
 
 **Accept when**, across a 10 s pause, in and out of combat, with numeric probes on both sides:
 - **Server:** aura remaining, cooldown remaining, a cast's remaining time, a creature's respawn time

@@ -214,7 +214,7 @@ pub use glue_session::login::AutoLogin;
 /// A crate on top asks the session for a server command, a relog or a new character.
 pub use glue_session::requests::SessionRequest;
 pub use local_state::share_character_state;
-pub use net::{enable_world_pause, world_paused, Objects};
+pub use net::{enable_world_pause, mid_air, world_paused, Objects};
 pub use target::Interact;
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as

@@ -18,15 +18,63 @@
 //! The per-character stores the burst refills are reset by their own modules on the same event
 //! (`crate::spell`, `crate::ui_action`). The world, terrain and objects stay.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use benilla_assets::coords::bevy_to_wow;
 use benilla_protocol::{SessionEvent, SessionEventKind};
+use benilla_world::world_clock::WorldClock;
 use bevy::prelude::*;
 
-use super::{GuidIndex, MoverClaim, NetCommands, NetHandlerApp, ObjectStore, SelfGuid, SelfPlayer};
+use super::{
+    ClientCommand, GuidIndex, MoverClaim, NetCommands, NetHandlerApp, ObjectStore, RemoteMotion,
+    SelfGuid, SelfPlayer,
+};
+use crate::player::{AirSeed, Player};
 
 pub(super) fn register(app: &mut App) {
     app.init_resource::<PartyArrivalOwed>()
         .init_resource::<crate::lanes::LaneHold>()
         .net_handler(SessionEventKind::PartySwap, on_party_swap);
+}
+
+static MID_AIR: AtomicBool = AtomicBool::new(false);
+
+/// Whether the played character is in the air: a swap then says so (`.party swap <name> air`), so
+/// the server holds the old character for the landing. Only the client knows: a step off a ledge
+/// may not have reached the server yet.
+pub fn mid_air() -> bool {
+    MID_AIR.load(Ordering::Relaxed)
+}
+
+pub(crate) fn note_mid_air(airborne: bool) {
+    MID_AIR.store(airborne, Ordering::Relaxed);
+}
+
+/// The dead-reckon's state for a body swapped away in the air ([`super::motion::PartyFall`]).
+fn fall_motion(seed: AirSeed, now_ms: f64) -> RemoteMotion {
+    let wow_pos = bevy_to_wow(seed.pos);
+    RemoteMotion {
+        wow_pos,
+        orientation: seed.orientation,
+        flags: seed.flags,
+        pitch: 0.0,
+        speed: seed.horiz_vel.length(),
+        vertical_velocity: seed.vel_y,
+        // Bevy's `(x, y, z)` is WoW's `(-y, z, -x)`.
+        jump_xy_vel: [-seed.horiz_vel.z, -seed.horiz_vel.x],
+        fall_start: Some(super::motion::FallHeight {
+            world_z: seed.fall_start_y,
+            aboard: None,
+        }),
+        pending: Default::default(),
+        relay: Default::default(),
+        last_apply_ms: now_ms,
+        last_apply_pos: wow_pos,
+        party_fall: Some(super::motion::PartyFall {
+            since_ms: now_ms,
+            stalled: 0,
+        }),
+    }
 }
 
 /// The new character a swap owes an arrival: its self create in the burst runs our create hook,
@@ -58,6 +106,8 @@ fn on_party_swap(
         Option<ResMut<crate::player::SwapBlend>>,
         Res<Time<Real>>,
     ),
+    // The old character's fall, if it is in one.
+    (player, world_time): (Option<Res<Player>>, Res<Time<WorldClock>>),
 ) {
     let SessionEvent::PartySwap { old, new } = ev else {
         return;
@@ -77,6 +127,24 @@ fn on_party_swap(
     info!("net: party swap {old:#x} -> {new:#x}");
     if benilla_assets::trace::enabled_for("pty") {
         benilla_assets::trace::line("pty", &format!("swap {old:#x} -> {new:#x}"));
+    }
+
+    // A fall flies on as a remote mover's, and lands in `CMSG_PARTY_LANDED`. A body on the ground
+    // reports at once: it may have landed since the key asked the server to hold it.
+    if let (Some(body), Some(player)) = (tagged.iter().next(), player.as_deref()) {
+        match player.air_seed() {
+            Some(seed) => {
+                let now_ms = world_time.elapsed_secs_f64() * 1000.0;
+                commands.entity(body).insert(fall_motion(seed, now_ms));
+            }
+            None => {
+                let _ = net.0.send(ClientCommand::PartyLanded {
+                    guid: old,
+                    position: bevy_to_wow(player.pos),
+                    orientation: player.facing(),
+                });
+            }
+        }
     }
 
     self_guid.0 = Some(new);
@@ -160,7 +228,8 @@ mod tests {
             .init_resource::<crate::ui_world_enter::PartyRebindOwed>()
             .init_resource::<crate::ui_world_enter::PartyRow>()
             .init_resource::<crate::player::SwapBlend>()
-            .init_resource::<Time<Real>>();
+            .init_resource::<Time<Real>>()
+            .init_resource::<Time<WorldClock>>();
         let mut roster = Roster::with_chars(vec![test_character(OLD, "Partythree")]);
         roster.pending_pick = Some(OLD);
         app.insert_resource(roster);
@@ -237,6 +306,26 @@ mod tests {
             ),
             ("Partyone", 1, 1, 1, 4)
         );
+    }
+
+    #[test]
+    fn a_fall_hands_on_its_arc_in_the_wires_axes() {
+        use crate::creature_anim::move_flags;
+        let seed = AirSeed {
+            // Bevy's `(x, y, z)` is WoW's `(-y, z, -x)`.
+            pos: Vec3::new(-2.0, 3.0, -1.0),
+            flags: move_flags::FALLING,
+            vel_y: 4.0,
+            horiz_vel: Vec3::new(-7.0, 0.0, -5.0),
+            fall_start_y: 3.5,
+            orientation: 1.5,
+        };
+        let rm = fall_motion(seed, 900.0);
+        assert_eq!(rm.wow_pos, [1.0, 2.0, 3.0]);
+        assert_eq!(rm.jump_xy_vel, [5.0, 7.0]);
+        assert_eq!(rm.vertical_velocity, 4.0);
+        assert_eq!(rm.fall_start.map(|s| s.world_z), Some(3.5));
+        assert_eq!(rm.party_fall.map(|f| f.since_ms), Some(900.0));
     }
 
     #[test]

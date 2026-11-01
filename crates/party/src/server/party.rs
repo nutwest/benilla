@@ -22,6 +22,7 @@ use super::layout::Layout;
 use super::setup::Secrets;
 use super::{Phase, Supervisor};
 
+mod fall_test;
 mod m1c_test;
 mod pause_test;
 mod swap_test;
@@ -109,6 +110,12 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
     if std::env::var_os("PARTY_SWAP_TEST").is_some() {
         if let Err(err) = swap_test::swap_checks(sup, layout, db, &members, &mut active) {
             warn!("party: swap checks failed: {err:#}");
+        }
+        record_played(layout, members[active].name);
+    }
+    if std::env::var_os("PARTY_FALL_TEST").is_some() {
+        if let Err(err) = fall_test::checks(sup, layout, &members, &mut active) {
+            warn!("party: fall checks failed: {err:#}");
         }
         record_played(layout, members[active].name);
     }

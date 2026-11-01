@@ -372,6 +372,7 @@ pub(super) fn control(
         view_customised: pointer.6.as_ref().is_some_and(|v| v.current_customised()),
         ..*pointer.3
     };
+    crate::net::note_mid_air(player.air_seed().is_some());
     // The camera runs through a pause, when `Res<Time>` stands still.
     let paused = benilla_world::world_clock::is_paused();
     let dt = frame

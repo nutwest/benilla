@@ -550,6 +550,17 @@ pub(super) struct PlayerRide {
     pub(super) placed: bool,
 }
 
+/// A body's fall as a party swap hands it to the dead-reckon ([`Player::air_seed`]), in Bevy space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct AirSeed {
+    pub(crate) pos: Vec3,
+    pub(crate) flags: u32,
+    pub(crate) vel_y: f32,
+    pub(crate) horiz_vel: Vec3,
+    pub(crate) fall_start_y: f32,
+    pub(crate) orientation: f32,
+}
+
 /// A knockback aimed at our mover (`SMSG_MOVE_KNOCK_BACK`), latched until the mover flies it. The
 /// ack is owed only if the launch happened and echoes `launch` as its jump tail: vmangos matches
 /// all four floats within 0.01 (`Unit.cpp:7096-7100`).
@@ -643,6 +654,24 @@ impl Player {
     /// (turning) on them, as the reference's ripple driver `0x5fa760` does.
     pub(crate) fn move_flags(&self) -> u32 {
         self.move_flags
+    }
+
+    /// The fall this body is in, for a party swap to hand on, whatever began it: a jump, a step
+    /// off a ledge, a knockback. A swimmer has no arc, a server ride has none of ours, and a
+    /// transport's deck-local pose is not one the dead-reckon resolves.
+    pub(crate) fn air_seed(&self) -> Option<AirSeed> {
+        use crate::creature_anim::move_flags;
+        let aboard = self.move_flags & move_flags::ON_TRANSPORT != 0;
+        (self.airborne_since.is_some() && !self.swimming && !self.server_riding && !aboard).then(
+            || AirSeed {
+                pos: self.pos,
+                flags: self.move_flags | move_flags::FALLING,
+                vel_y: self.vel_y,
+                horiz_vel: self.horiz_vel,
+                fall_start_y: self.fall_start_y,
+                orientation: self.facing(),
+            },
+        )
     }
 
     /// The states on this resource that stop WASD, comma-joined, or `"none"`: an instrument for the
