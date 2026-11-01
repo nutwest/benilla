@@ -251,7 +251,7 @@ pub(super) fn sample_look(
 #[allow(clippy::type_complexity)]
 pub(super) fn control(
     time: Res<Time>,
-    frame: Res<benilla_world::frame_pace::FrameStep>,
+    frame: Option<Res<benilla_world::frame_pace::FrameStep>>,
     keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     // Tupled parameters keep this system under Bevy's limit of 16.
@@ -374,11 +374,9 @@ pub(super) fn control(
     };
     // The camera runs through a pause, when `Res<Time>` stands still.
     let paused = benilla_world::world_clock::is_paused();
-    let dt = if paused {
-        frame.delta.as_secs_f32()
-    } else {
-        time.delta_secs()
-    };
+    let dt = frame
+        .filter(|_| paused)
+        .map_or(time.delta_secs(), |f| f.delta.as_secs_f32());
     // Free fly reads no keys while an EditBox is `typing` (not the per-key `consumed`, a binding's
     // concern); `binds` applied that gate when it latched, and the dev chords ignore it.
     let typing = ui_capture.typing;
