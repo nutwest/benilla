@@ -18,7 +18,6 @@ anyhow = { workspace = true }
 # `default-features = false`, or `--no-default-features` here still builds benilla-app with `dev`.
 benilla-app = { path = "../benilla-app", default-features = false }
 benilla-formats = { path = "../benilla-formats", default-features = false }
-benilla-world = { path = "../benilla-world", default-features = false }
 bevy = { workspace = true }
 sha2 = "0.10"
 

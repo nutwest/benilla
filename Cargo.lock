@@ -5179,7 +5179,6 @@ dependencies = [
  "benilla-app",
  "benilla-buildstamp",
  "benilla-formats",
- "benilla-world",
  "bevy",
  "sha2",
  "windows-sys 0.59.0",
