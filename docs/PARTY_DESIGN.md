@@ -559,14 +559,7 @@ movement keys.
   for M6, and the world's own click-to-target runs as usual. Two clicks within 0.35 s swap to that
   member, by the switch key's path.
 
-**Room for M6 orders.**
-- Orders travel like the swap: `.party order <member> <verb> …` on the async thread, queued on the
-  World messager, stored on that member's `PartyBotAI`. Storing them needs no map update, so they
-  work while paused and the AI acts on them from the first tick after resume.
-- An order lives with the AI, so the swap must carry it: the fresh AI built for the old character
-  takes it, as it already takes the CC and focus marks.
-- Queued orders are a client-side list too, drawn over the frozen world, so `SMSG_PARTY_PAUSE` needs
-  no change.
+**Orders** are §2.3.
 
 **The picture while paused: measured, one place.** The spike (2026-11-01, Northshire, 640x360, play
 build, `PARTY_PICTURE_SPIKE`) paused the server and `Time<Virtual>`, flew the world camera 100 yd,
@@ -589,6 +582,114 @@ through a pause and expire early, not break anything. Step 1 moved 87 lines, inc
 scripts' `boss_omen` and `ungoro_crater`. Left on wall time: mail, auctions, instance resets, game
 events, bans, logout, trade, mute and character create and login times.
 
+### 2.3 Selection and orders
+
+Planned, not built. Read from the fork's source and the client on 2026-11-01; nothing here has been
+run.
+
+**The order table.** One order per character, in `PlayerBotMgr` (`m_partyOrders`, keyed by guid), not
+on `PartyBotAI` as §2.2 first said. A swap builds a fresh AI and drops the old one, so an order on
+the AI would have to be carried in both directions. In a table there is nothing to carry: the
+fresh AI reads what is there.
+
+| Order | Set by | What the bot does |
+|---|---|---|
+| Move | Right-click on ground | Paths to its slot, then becomes Hold |
+| Hold | A finished Move | Stays put, and fights what reaches it without chasing |
+| Attack | Right-click on an enemy | Attacks it. When it dies, Hold where it stands |
+| Follow | Right-click on a party member | Follows and assists that member |
+| None | The default | Today's behaviour: follow the leader |
+
+**The bot's side.** `UpdateAI` is one long pass with few decisions that matter:
+- **Follow** is one line: after `GetPartyLeader()`, an order replaces `pLeader` with the followed
+  member. Following, assisting, mounting and catching up all read `pLeader`. The guid is stable, so
+  it survives that member being swapped.
+- **Attack:** the order's unit goes ahead of `SelectAttackTarget`. An attack started this way already
+  chases, through `AttackStart`.
+- **Move:** `GetMotionMaster()->MovePoint(id, x, y, z, MOVE_PATHFINDING | MOVE_RUN_MODE)`. Nothing in
+  `PartyBotAI` calls `MovePoint` today, though `PointMovementGenerator<Player>` exists and
+  `.debug` uses it on a player. While moving it skips combat and buffing, and it ends when the
+  generator is no longer `POINT_MOTION_TYPE`.
+- **Staying put needs four gates:**
+  - the idle `MoveFollow`, at the end of `UpdateAI`;
+  - the teleport to the leader past 100 yd, or a held bot blinks back;
+  - `BeginChasing`, one function with 11 callers;
+  - `RunAwayFromTarget`, one function with 5 callers.
+  32 other `GetMotionMaster` calls sit in the class routines. Most clear motion and go idle, but
+  each must be read when this is built.
+- **Pathing:** mmaps are built and on for this install (`mmap.enabled = 1`, 1783 files). On a first
+  run they build in the background for about 27 minutes, and until then `MovePoint` falls back to
+  a straight line.
+- **`DrinkAndEat`, resurrection and revive** run ahead of all this, and stay as they are.
+
+**Sending orders.** `.party order <name> move x y z o | attack <guid> | follow <name> | hold | clear`,
+in party chat, one line per member. That is the path `.party pause` and `.party swap` use: the async
+thread queues it on the World messager, which writes the table. So it works while paused, and needs
+no map update. The AI acts on it at its first update after resume, and `PB_UPDATE_INTERVAL` delays
+that by up to 1 s. It must stay party chat: a say would wait behind the map.
+
+**The played character.** Its movement is client-simulated, so the client must run its orders:
+- **Move:** `Approach` (the Click to Move walk, mode 4) already walks to a point with input cancelling
+  it. It needs a verb that skips the `AutoInteract` option. It beelines with no pathing, so a wall
+  can stop it, which is acceptable for "for now".
+- **Attack:** `Approach`'s melee walk plus the existing attack.
+- **Follow:** `FollowState`, also a beeline.
+- **While paused** `control` doesn't run, so the crate holds the order and arms it at the resume.
+- **Rejected: a server spline** on the played character. It would path, but a ride locks the player's
+  input until it ends.
+
+**A swap mid-order.** The crate keeps the same order list the server does:
+- **Bot to played:** the character's server order goes dormant, as it has no AI. The crate starts it
+  on the client.
+- **Played to bot:** the client's walk ends at the swap, and the crate sends the order so the fresh
+  AI takes over.
+- **Pressing a movement key** on the played character ends its order, as it ends a Click to Move
+  walk.
+
+**Client: selection.** In the crate's `rts.rs`, on from M5's click:
+- **Click or drag:** by travel from the press, the reference's rule in pixels. `PressGesture` calls a
+  press a click within 0.2 s, or within 0.8 s and under 2.25° of yaw and 2° of pitch. At M5's 0.004
+  rad per pixel, that is about 10 px. It is one rule for both buttons.
+- **Left click:** selects a member, or replaces the selection. Shift adds or removes it.
+- **Left click on empty ground:** clears. The game's own click still runs, so clicking an enemy
+  targets it, and leaves the selection alone.
+- **Left drag:** a box, drawn as a Bevy node, selects the members whose projected middles are inside.
+  The app's click sees the drag's travel and does nothing.
+- **Right drag:** still turns the camera. A right click gives the order.
+- **Picking what's under a right click:** `WorldPick` tests mesh triangles with no physics, so it
+  works on a frozen world, and it needs a part drawn this frame, which the RTS view's are. Members
+  and enemies pick in screen space as M5 does, then the ray takes the ground. Enemy or friend comes
+  from `Relations::can_attack`. A public verb has to expose both, as the crate can't reach them.
+
+**Client: what you see.**
+- **Rings:** `target/ring.rs` draws one ring, `UnitSelectTexture.blp` projected by `WorldDecal`. M6
+  makes it a list of rings for a consumer's guids. `WorldDecal` walks the receiving colliders
+  directly, and reads no `Time`, so rings work while paused. Each ring stays cached while its unit
+  stands still.
+- **Party frames:** a Bevy outline over the frame's rect, from `PlayerFrame` and
+  `PartyMemberFrame1`–`4`, matched by `UnitName`. Tinting the frame's own texture would be simpler,
+  but METHOD keeps the stock UI to one layer that doesn't grow, so the outline changes nothing of
+  the stock UI.
+- **Markers:** the same decal path, at each slot. They are kept by the crate, which needs no server
+  reply: one clears when its member comes within 2 yd, or gets a new order. They are drawn the same
+  paused or running.
+
+**Formations.** The client works out the slots, so the markers show exactly where each member will
+stand: a line or wedge across the move's direction, about 3 yd apart, each `z` from
+`TerrainHeights`. Members take the slots nearest them. The server's pathing snaps a slot off the
+mesh to the nearest point.
+
+**Queues** come last, in M6c: Shift + right-click appends to a member's list instead of replacing it.
+
+**The riskiest unknown** is the handover of an order in flight across a swap. Each piece exists, but
+the two ends are different movers: a client beeline and a server path. A character mid-walk has to
+change from one to the other without a stop, a snap or a lost order, in both directions, and
+paused or running. Reading can't settle how that looks. So M6b starts with that case, on one
+member, ahead of the formation and combat work.
+
+The second risk is Hold inside combat: a melee bot that won't chase, or a healer with no line of
+sight, may stand idle, and the class routines' other motion calls may still move it.
+
 ### Engine changes this needs (to be approved before each is made)
 
 The crate reaches benilla-app through `run_with`, `Objects` and `Interact` only, and every other
@@ -602,7 +703,7 @@ are fork changes.
 | E1 | **The identity swap.** `SMSG_PARTY_SWAP {old, new}` in benilla-protocol, and its handling in benilla-app: move `SelfGuid`, `SelfPlayer`, `Embodied`/`ActiveMover` and `MoverClaim` to the new guid; reset the per-character caches without touching the world; reload the UI in place under the new character | M1 |
 | E1b | **Done (relog M1, kept).** `benilla_app::SessionRequest::{Command, Target, Relog, CreateCharacter}` (`glue_session/requests.rs`): server commands for the bots, and character creation for party setup | M1 |
 | E2 | A pausable world clock (§2.2): `SMSG_PARTY_PAUSE`, `benilla_world::world_clock`, a `FrameStep` split into real and world steps, `GetTime` and `UiClock` on the world step, `Time<Virtual>::pause()`, the "not driving" gate, and one refusal point for commands | M4 |
-| E3 | A camera-yield hook (§2.2): `CameraYield` stops `control` writing the camera, keeps the third-person pose for the way back, and exposes the world camera to a crate system after `control` | M5 |
+| E3 | A camera yield (§2.2): built as `yield_camera` and `CameraPlaced`. `control` keeps placing the third-person pose, and a consumer overwrites it after | M5 |
 | E4 | Public read access to the party roster and member guids (`ui_party`) and to `SelfGuid` | M2, M6 |
 | E5 | A hook for chat replies: let the crate see system-message lines so it can read server command replies. M4 doesn't need it: pause replies with an opcode. | M2 |
 
@@ -1180,13 +1281,50 @@ camera has no automated tests.
 - Everything within the radius is drawn: no missing or half-faded objects.
 - With the camera in the RTS view, the character doesn't move: no `MSG_MOVE_*` sent.
 
-**M6 — Party orders.**
+**M6 — Selection and orders** (§2.3).
 
-- td-game's behaviours become server bot orders: Hold here, Guard an area, Escort a member,
-  Attack a target, Move to a point.
-- The order panel and the anchor and escort picks come from td-game's `hud.rs` and `units.rs`.
-- Orders given while paused are stored on each member's `PartyBotAI` and run from the first tick
-  after resume (§2.2). The swap carries them across to the fresh AI.
+**M6a — Selection, client only.**
+1. Click or drag by travel, on both buttons.
+2. Left click, Shift, click on empty ground, and the box with its drawn rectangle.
+3. Rings: `target/ring.rs` takes a list, with a public way to set it.
+4. The party frame outlines.
+
+**Accept when:**
+- Click, Shift-click, box and clear each give the right set, paused and running, with no packet but
+  the game's own target.
+- Each selected member has a ring that follows it, and an outline on its frame.
+- A swap keeps the selection. A right drag still turns the camera.
+- A UI frame under the cursor takes the click, and starts no box.
+
+**M6b — Orders.**
+1. **The handover first** (the riskiest unknown): the table, `.party order`, and Move on one member,
+   swapped mid-walk in both directions, paused and running.
+2. The bot's Hold gates, then Attack and Follow.
+3. The played character's orders, through `Approach` and `FollowState`.
+4. Right click: ground, enemy, member, to all selected.
+
+**Accept when:**
+- **Move:** a bot paths around a wall to the point and stays there, past 100 yd from the leader, with
+  no teleport back. It doesn't follow the leader after it.
+- **Attack:** all selected attack that enemy. When it dies they hold there.
+- **Follow:** a member follows the named member and assists it, including after that member is
+  swapped.
+- **Hold:** a bot attacked in melee fights back and doesn't leave its spot by more than its reach.
+- **Paused:** an order given while paused moves nothing until resume, then runs, with no burst.
+- **Swap:** an order survives a swap in both directions, with no stop or snap beyond the swap's own.
+- **The played character** obeys, and a movement key ends its order.
+
+**M6c — Formations, markers, queues.**
+1. Slots, and matching members to them.
+2. Ground markers, drawn while paused and running.
+3. Shift + right-click queues: the table holds a list per character, and each order starts when the
+   one before it ends.
+
+**Accept when:**
+- Three members ordered to a point end at distinct slots about 3 yd apart, on sloped ground too.
+- Each marker shows where its member ends, and clears on arrival or a new order.
+- Markers placed while paused stay through the pause and clear as their members arrive.
+- Shift + right-click runs orders in the order given, shows every marker, and survives a swap.
 
 **M7 — Polish.**
 
