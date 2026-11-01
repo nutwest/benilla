@@ -785,7 +785,11 @@ fn on_channel(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     }
 }
 
-fn on_aura_duration(In(ev): In<SessionEvent>, mut l: Lifecycle, real_clock: Res<Time<Real>>) {
+fn on_aura_duration(
+    In(ev): In<SessionEvent>,
+    mut l: Lifecycle,
+    real_clock: Res<Time<benilla_world::world_clock::WorldClock>>,
+) {
     if let SessionEvent::AuraDuration { slot, remaining_ms } = ev {
         aura_duration(
             slot,

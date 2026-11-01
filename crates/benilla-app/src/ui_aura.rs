@@ -699,7 +699,7 @@ fn feed_unit_guids(
     mut mem: ResMut<AuraFeedMemory>,
     cache: Res<PlayerAuraCache>,
     spells: Option<Res<Spells>>,
-    time: Res<Time<Real>>,
+    time: Res<Time<benilla_world::world_clock::WorldClock>>,
 ) {
     vm.turn(|script, units| {
         let Some(script) = script else {
@@ -781,7 +781,7 @@ pub(crate) struct AuraEntry<'w, 's> {
     // `Option`: a UI-only harness has no aura plugin, and so no cache to set up.
     cache: Option<ResMut<'w, PlayerAuraCache>>,
     spells: Option<Res<'w, Spells>>,
-    time: Option<Res<'w, Time<Real>>>,
+    time: Option<Res<'w, Time<benilla_world::world_clock::WorldClock>>>,
     me: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
 }
 
@@ -897,7 +897,7 @@ pub(crate) struct PlayerAuraWatch<'w, 's> {
     // `Option`: a UI-only harness has no aura plugin, and so no cache to rebuild.
     cache: Option<ResMut<'w, PlayerAuraCache>>,
     spells: Option<Res<'w, Spells>>,
-    time: Option<Res<'w, Time<Real>>>,
+    time: Option<Res<'w, Time<benilla_world::world_clock::WorldClock>>>,
     stores: crate::ui_unit::views::ViewStores<'w, 's>,
     me: Query<'w, 's, Entity, With<SelfPlayer>>,
 }
@@ -1312,7 +1312,7 @@ mod tests {
         // Stamped at 90 s on the stamps' clock, five minutes left: it expires at 390 s.
         durations.set(32, 300_000, 90.0);
         // This frame's step takes the clock from 100 s to 100.016 s.
-        let at = Instant::now();
+        let at = benilla_world::world_clock::now();
         let step = benilla_world::frame_pace::FrameStep {
             delta: Duration::from_millis(16),
             at,
