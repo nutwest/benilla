@@ -443,8 +443,13 @@ nothing to walk and adjust on resume.
 - It is a process-wide atomic, because several sites are free functions with no resource access.
 - **`UiClock`'s anchor moves to the world clock.** Every `Instant`-to-`GetTime` conversion already
   goes through that pair, so a frozen `GetTime` and a frozen world clock stay consistent.
-- **The sweep:** a source-scanning test, like the existing guard tests, lists the modules that must
-  not call `Instant::now()` directly, so a new site can't slip past.
+- **The sweep:** `crates/benilla-app/tests/world_clock_guard.rs` fails a new `Instant::now` or
+  `Time<Real>` anywhere in `benilla-app` outside a list of real-time files, each listed by what it
+  is. The list runs that way round because a store on the world clock read through the wall clock
+  would come apart after a pause. `Instant::elapsed` is the same read, hidden, and only review
+  catches it (`transport.rs` had one).
+- **Packet stamps:** the IO thread stamps on the wall clock, so a stamp goes through
+  `world_clock::of` before a store takes it.
 - **Sound keeps running:** music and ambience play on. Rendering, input, net threads and the UI keep
   their real clocks.
 
@@ -463,13 +468,16 @@ nothing to walk and adjust on resume.
 - `control` still runs, because the camera lives there. Pause joins its existing "not driving"
   gate (`server_riding`, `control_lost`, `reseat`), which keeps the camera on the body and sends no
   movement.
-- Commands that would queue on the server are refused at one place, a `paused_allows(&ClientCommand)`
-  with an exhaustive match, so a new command must declare itself. Refused: movement, casts, attack
-  swing, item use, interaction, sit and stand.
-- Allowed: chat, `.party` commands, and the mover claim.
+- Commands that would run at the resume are held back at one place, `net/pause_gate.rs`, an
+  exhaustive match at the IO thread, so a new command must declare itself. Held back: movement,
+  casts, item use, combat, posture and interaction with NPCs and objects.
+- A cast attempt refuses earlier, silently, before it arms any local state.
+- Allowed: chat, queries, `.party` commands, and the mover claim.
 - Selecting a target stays local-first: `CMSG_SET_SELECTION` queues and lands on resume.
-- Item moves and action-bar edits need a decision at build time. They'd queue, so an icon could
-  stay locked until resume; M4 refuses them until proven safe.
+- Item moves and action-bar edits pass and queue, reversing the plan: dropping one could leave its
+  item locked for good, where a queued one only waits for the resume.
+- The mover isn't parked: the server's mover sits the pause out in the same state, so a held key
+  carries on at the resume, and a key released during the pause sends its stop then.
 
 **F6 while paused works, by construction.**
 - The swap runs on the World messager, before the sessions update and outside the map update,
@@ -530,13 +538,12 @@ then flew the same line unpaused as the control.
 - **Streaming runs while paused.** Meshes kept arriving along the paused flight (13–36 a second),
   matching the control's 13–28. The doodad distance fade and the mesh counts follow the camera
   alone. The paused flight held 60 fps, as the control did.
-- **Not settled by that run: `RenderFade`.** No fade was live during the pause, so the frozen ramp
-  was never seen. From the code, `apply_render_fade` reads `Res<Time>`, so a fade in flight holds
-  its alpha, and a unit created while paused would stay at alpha 0 until resume. Only the swap's
-  burst can create one, so step 5 must check it. The reference runs this ramp on the wall clock
-  (`FadeTo`), so the likely fix is to move the ramp to `Time<Real>`.
+- **`RenderFade`.** No fade was live during the pause, so a frozen ramp was never seen. The code
+  said a unit created while paused would stay at alpha 0 until resume, so the appear and teardown
+  ramps moved to `Time<Real>`, the wall clock the reference runs `FadeTo` on. A fade in flight now
+  finishes during a pause.
 - **What the run doesn't cover:** interiors, particles, a camera that leaves the terrain loaded
-  around the body, and the remote splines, which are still on `Instant` until step 3.
+  around the body, and the remote splines, which were still on `Instant` then.
 
 **Second risk, low and mechanical:** a raw `time(nullptr)` deadline missed on the server would tick
 through a pause and expire early, not break anything. Step 1 moved 87 lines, including the
@@ -698,7 +705,8 @@ Steps:
   - The relog switch and its checks are gone. `.party lead` still runs before `.partybot load`.
 - **Checks** (`PARTY_M1C_TEST=1`, `crates/party/src/server/party/m1c_test.rs`):
   - **Swaps:** six out of combat (two rounds of the party) and two mid-fight, each through the
-    key's own code path.
+    key's own code path. A `WOW_UNATTENDED=1` run stops after the six, as unattended combat probes
+    are ruled out.
   - **After each swap:**
     - the client walks the new character on the movement key (W, as a keyboard message);
     - the server's `.party status` checks who holds the client, the claimed mover, who moved and
@@ -1083,14 +1091,21 @@ and the pieces listed below).
      - A pause with the client's socket closed lifted itself.
    - Not tested: a refused pause (teleport, flight), and a real combat tick across a pause, as
      unattended combat probes are ruled out.
-2. **Picture spike.** Done, §2.2: nothing failed to appear. `RenderFade` is still open.
-3. **World clock.** `world_clock`, the `FrameStep` split, `GetTime` and `UiClock`, then one subsystem
-   per commit: splines and remote motion, casts, cooldowns, auras, transports, weather and material
-   animation, the sky. Then the source-scanning test.
-4. **Input and state.** `SMSG_PARTY_PAUSE` in benilla-protocol, the "not driving" gate, the command
-   refusal point, a rebindable pause binding (default F7) and a "Paused" overlay.
+2. **Picture spike.** Done, §2.2: nothing failed to appear. The spike is removed.
+3. **World clock.** Built, 2026-11-01: `world_clock`, the `FrameStep` split, `GetTime` and
+   `UiClock`, then one subsystem per commit: splines and remote motion, casts, cooldowns, auras,
+   transports, weather and material animation, the sky. Then the guard test.
+4. **Input and state.** Built, 2026-11-01: `SMSG_PARTY_PAUSE` in benilla-protocol, the "not driving"
+   gate, the command gate, and a "Paused" banner. The binding is `WORLDPAUSE`, default F7, a row of
+   the stock Key Bindings window under "Party". Its body is empty: 1.12 has no Lua call for this and
+   adding one would show it to addons, so the binding dispatch takes the command by name. A consumer
+   offers it with `benilla_app::enable_world_pause`; without that there is no row.
+   - **Checked** (2026-11-01): the touched crates' tests under `cargo test`, and one unattended M1c
+     run, six swaps, 30 findings, 0 FAIL, 59–68 ms from the key to playing the new character.
+   - **Not run:** the client's pause itself. No live run has pressed the key, so the freeze, the
+     gate, the banner and the resume are covered by unit tests alone until the playtest.
 5. **F6 while paused.** Swap around the party during a pause, and confirm the mover claim lands on
-   resume and that a unit the burst creates isn't left at alpha 0 (§2.2).
+   resume and that a unit the burst creates fades in (§2.2).
 
 **Accept when**, across a 10 s pause, in and out of combat, with numeric probes on both sides:
 - **Server:** aura remaining, cooldown remaining, a cast's remaining time, a creature's respawn time
