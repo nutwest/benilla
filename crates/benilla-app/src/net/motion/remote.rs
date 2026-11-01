@@ -332,7 +332,7 @@ pub(in crate::net) fn apply_move(
 /// clamps each delta to 250 ms, so a throttled window would fall behind the schedule.
 #[allow(clippy::type_complexity)]
 pub(in crate::net) fn drain_pending_moves(
-    time: Res<Time<Real>>,
+    time: Res<Time<benilla_world::world_clock::WorldClock>>,
     mut commands: Commands,
     mut landings: MessageWriter<crate::creature_anim::HardLanding>,
     mut q: Query<(Entity, &mut RemoteMotion), (Without<Spline>, Without<ActiveMover>)>,
@@ -353,7 +353,7 @@ pub(in crate::net) fn drain_pending_moves(
 /// the clock the fire-times are on.
 #[allow(clippy::type_complexity)]
 pub(in crate::net) fn extrapolate_remote_units(
-    time: Res<Time<Real>>,
+    time: Res<Time<benilla_world::world_clock::WorldClock>>,
     mut commands: Commands,
     // The local controller's own sweep and capsule.
     world: benilla_world::collision::WorldCollision,
@@ -769,7 +769,7 @@ mod under_floor {
     fn frames(app: &mut App, n: usize) {
         for _ in 0..n {
             app.world_mut()
-                .resource_mut::<Time<Real>>()
+                .resource_mut::<Time<benilla_world::world_clock::WorldClock>>()
                 .advance_by(FRAME);
             app.world_mut()
                 .run_system_once(extrapolate_remote_units)

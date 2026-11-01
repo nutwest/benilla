@@ -85,6 +85,11 @@ pub fn lag_at(at: Instant) -> Duration {
     Duration::from_nanos(real.saturating_sub(PAUSE.world_ns(real)))
 }
 
+/// The world clock's reading of a wall-clock stamp, as the IO thread takes one on a packet.
+pub fn of(at: Instant) -> Instant {
+    at.checked_sub(lag_at(at)).unwrap_or(at)
+}
+
 /// The world clock now, for everything that keeps time with the world.
 pub fn now() -> Instant {
     origin() + Duration::from_nanos(PAUSE.world_ns(real_ns(Instant::now())))

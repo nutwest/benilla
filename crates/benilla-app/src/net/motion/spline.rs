@@ -68,7 +68,7 @@ impl Spline {
 
     /// Elapsed over duration, clamped to `0..=1`; the inspector's motion line reads it.
     pub(crate) fn elapsed_frac(&self) -> f32 {
-        (Instant::now()
+        (benilla_world::world_clock::now()
             .saturating_duration_since(self.start)
             .as_secs_f32()
             / self.duration.as_secs_f32().max(1e-3))
@@ -203,7 +203,7 @@ pub(in crate::net) fn monster_move_spline(
     }
     Some(Spline {
         points: path,
-        start: Instant::now(),
+        start: benilla_world::world_clock::now(),
         duration: Duration::from_millis(u64::from(duration_ms)),
         id: spline_id,
         // `grounded` also picks the sampler (lerp or Catmull-Rom); the clamp skips a deck path on
@@ -230,9 +230,9 @@ pub(in crate::net) fn create_spline(spline: CreateSpline) -> Option<Spline> {
     Some(Spline {
         points: spline.path,
         // `checked_sub`: a spline older than the monotonic clock's origin would panic on `-`.
-        start: Instant::now()
+        start: benilla_world::world_clock::now()
             .checked_sub(passed)
-            .unwrap_or_else(Instant::now),
+            .unwrap_or_else(benilla_world::world_clock::now),
         duration: Duration::from_millis(u64::from(spline.duration_ms)),
         id: spline.id,
         grounded: !spline.flying,
@@ -339,7 +339,7 @@ pub(in crate::net) fn sample_splines(
     mut trace_next: Local<f32>,
     time: Res<Time>,
 ) {
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     // The `spl` trace ticks once a second for the whole population, so its lines share an instant.
     let tracing = benilla_assets::trace::enabled_for("spl");
     let tick = tracing && time.elapsed_secs() >= *trace_next;
@@ -588,7 +588,7 @@ pub(in crate::net) fn ground_clamp_creatures(
 ) {
     let cost = clamp_cost_enabled();
     let legacy = clamp_seat_disabled();
-    let t0 = cost.then(std::time::Instant::now);
+    let t0 = cost.then(benilla_world::world_clock::now);
     let (mut visited, mut skipped, mut held, mut cast, mut swept, mut hit_n, mut moved) =
         (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     // Walker-arm counters: `noflr` counts frames whose swept step found no floor (nonzero while the
@@ -1216,13 +1216,13 @@ mod tests {
             deck: None,
             final_facing: benilla_protocol::MonsterMoveFacing::None,
             points,
-            start: Instant::now() - Duration::from_secs_f32(10.0 * frac),
+            start: benilla_world::world_clock::now() - Duration::from_secs_f32(10.0 * frac),
             duration: Duration::from_secs(10),
             id: 7,
             grounded,
             run_mode: true,
         };
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         (spline, now)
     }
 
@@ -1310,7 +1310,7 @@ mod tests {
             facing: MonsterMoveFacing::None,
         })
         .expect("a live walk");
-        let (pos, facing, _) = s.sample(Instant::now());
+        let (pos, facing, _) = s.sample(benilla_world::world_clock::now());
         assert!(
             (pos[0] - 15.0).abs() < 0.05 && pos[1].abs() < 1e-3,
             "expected three quarters along, got {pos:?}"
@@ -1549,7 +1549,7 @@ mod server_moved_players {
             deck: None,
             final_facing: benilla_protocol::MonsterMoveFacing::None,
             points: vec![RIM_A, RIM_B],
-            start: Instant::now(),
+            start: benilla_world::world_clock::now(),
             duration: Duration::from_secs(4),
             id: 77,
             grounded: true,
@@ -1628,7 +1628,7 @@ mod server_moved_players {
             deck: None,
             final_facing: benilla_protocol::MonsterMoveFacing::None,
             points: vec![RIM_A, RIM_B],
-            start: Instant::now(),
+            start: benilla_world::world_clock::now(),
             duration: Duration::from_secs(4),
             id: 78,
             grounded: false,
@@ -1939,7 +1939,7 @@ mod inside_a_hull {
             deck: None,
             final_facing: benilla_protocol::MonsterMoveFacing::None,
             points: vec![a, b],
-            start: Instant::now(),
+            start: benilla_world::world_clock::now(),
             duration: Duration::from_secs(secs),
             id,
             grounded: true,
@@ -2165,7 +2165,7 @@ mod final_facing_tests {
 
     /// Back-dates `spline` past its whole duration.
     fn ended(mut spline: Spline) -> Spline {
-        spline.start = Instant::now() - spline.duration - Duration::from_secs(1);
+        spline.start = benilla_world::world_clock::now() - spline.duration - Duration::from_secs(1);
         spline
     }
 
@@ -2250,7 +2250,7 @@ mod final_facing_tests {
     #[test]
     fn a_path_still_walked_faces_its_tangent() {
         let mut spline = walk(MonsterMoveFacing::Angle(PI));
-        spline.start = Instant::now() - Duration::from_secs(5);
+        spline.start = benilla_world::world_clock::now() - Duration::from_secs(5);
         let mut app = app();
         let e = app.world_mut().spawn((Transform::default(), spline)).id();
         app.update();

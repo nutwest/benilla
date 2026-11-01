@@ -74,7 +74,7 @@ pub(crate) struct Scene<'w, 's> {
     net: Res<'w, NetCommands>,
     index: ResMut<'w, GuidIndex>,
     self_guid: Res<'w, SelfGuid>,
-    real: Res<'w, Time<Real>>,
+    real: Res<'w, Time<benilla_world::world_clock::WorldClock>>,
     transforms: Query<'w, 's, &'static mut Transform>,
     movers: Query<'w, 's, (), With<ActiveMover>>,
     stores: Query<'w, 's, &'static mut ObjectStore>,
