@@ -797,7 +797,10 @@ fn object_create(
         .flatten()
         .map(|clock| crate::transport::TransportAnchor {
             progress_ms: clock.progress_ms,
-            at: clock.arrived.unwrap_or_else(std::time::Instant::now),
+            at: clock.arrived.map_or_else(
+                benilla_world::world_clock::now,
+                benilla_world::world_clock::of,
+            ),
         });
     // The placement, and on a type-11 lift the basis its keyframe offsets rotate through.
     let go_quat = (kind == EntityKind::GameObject)

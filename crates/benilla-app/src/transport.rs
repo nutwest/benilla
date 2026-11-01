@@ -237,7 +237,10 @@ impl Transport {
 
     /// The live cycle position for an anchor, shared by the tick and the rider math.
     pub(crate) fn cycle_ms(&self, anchor: &TransportAnchor) -> u32 {
-        let progress = u64::from(anchor.progress_ms) + anchor.at.elapsed().as_millis() as u64;
+        let progress = u64::from(anchor.progress_ms)
+            + benilla_world::world_clock::now()
+                .saturating_duration_since(anchor.at)
+                .as_millis() as u64;
         (progress % u64::from(self.period_ms().max(1))) as u32
     }
 
@@ -875,7 +878,7 @@ mod tests {
     #[test]
     fn a_worldport_leaves_the_ridden_transports_clock_alone() {
         let mut app = deck_app(1);
-        let at = Instant::now();
+        let at = benilla_world::world_clock::now();
         let deck = app
             .world_mut()
             .spawn((
@@ -916,7 +919,7 @@ mod tests {
                 taxi(two_legs((1, 0))),
                 TransportAnchor {
                     progress_ms: 1000,
-                    at: Instant::now(),
+                    at: benilla_world::world_clock::now(),
                 },
                 pose,
                 Visibility::Hidden,
@@ -945,7 +948,7 @@ mod tests {
             taxi(timetable),
             TransportAnchor {
                 progress_ms: 1000,
-                at: Instant::now(),
+                at: benilla_world::world_clock::now(),
             },
             Transform::default(),
             Visibility::Hidden,
@@ -1007,7 +1010,7 @@ mod tests {
                 CarrierAnimation::default(),
                 TransportAnchor {
                     progress_ms: 1000,
-                    at: Instant::now(),
+                    at: benilla_world::world_clock::now(),
                 },
                 Transform::default(),
                 Visibility::Hidden,
@@ -1069,7 +1072,7 @@ mod tests {
                 taxi(timetable),
                 TransportAnchor {
                     progress_ms: 1000,
-                    at: Instant::now(),
+                    at: benilla_world::world_clock::now(),
                 },
                 Transform::default(),
                 Visibility::Hidden,
@@ -1086,7 +1089,7 @@ mod tests {
         // Its create, on map 0's leg.
         app.world_mut().entity_mut(deck).insert(TransportAnchor {
             progress_ms: leg1 + 1000,
-            at: Instant::now(),
+            at: benilla_world::world_clock::now(),
         });
         app.update();
         let left: Vec<_> = app
@@ -1144,7 +1147,7 @@ mod tests {
             Transport::new(Drive::Lift(parked_lift())),
             TransportAnchor {
                 progress_ms: 0,
-                at: Instant::now(),
+                at: benilla_world::world_clock::now(),
             },
             Transform::default(),
             Visibility::default(),
@@ -1178,7 +1181,7 @@ mod tests {
                 Transport::new(Drive::Lift(parked_lift())),
                 TransportAnchor {
                     progress_ms: 0,
-                    at: Instant::now(),
+                    at: benilla_world::world_clock::now(),
                 },
                 Transform::default(),
                 // Anchored transports spawn hidden until their first ticked pose.
