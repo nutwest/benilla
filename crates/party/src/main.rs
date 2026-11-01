@@ -18,6 +18,7 @@ fn main() -> AppExit {
     // variables, macros and key bindings are the party's, not each character's. Action bars stay
     // per character, server-side.
     benilla_app::share_character_state("Party");
+    benilla_app::enable_world_pause();
 
     let supervisor = Arc::new(server::Supervisor::new(launched));
     let exit = benilla_app::run_with(

@@ -206,6 +206,7 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
     match benilla_ui::bindings_xml::parse(&benilla_ui::source::decode(&bytes)) {
         Ok(bindings) => {
             script.register_bindings(&bindings);
+            crate::net::register_pause_binding(script);
             info!(
                 "bindings: {} commands registered from {}",
                 bindings.len(),
@@ -228,7 +229,10 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
 pub(crate) fn default_bindings() -> Vec<benilla_ui::script::keybind::KeyBinding> {
     match reference_ui::read(reference_ui::DEFAULT_BINDINGS) {
         Some(bytes) => {
-            benilla_ui::script::keybind::parse_bindings_wtf(&String::from_utf8_lossy(&bytes))
+            let mut pairs =
+                benilla_ui::script::keybind::parse_bindings_wtf(&String::from_utf8_lossy(&bytes));
+            pairs.extend(crate::net::pause_default_binding());
+            pairs
         }
         None => {
             warn!(

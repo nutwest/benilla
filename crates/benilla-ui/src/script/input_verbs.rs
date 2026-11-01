@@ -97,6 +97,8 @@ pub enum FiredInput {
     ToggleAutoRun,
     /// `ToggleSheath()` (`0x48a070` → `0x5eb480`).
     ToggleSheath,
+    /// Deviation: `ToggleWorldPause()`, no 1.12 call: the party's pause binding (`crate::net`).
+    WorldPause,
     /// `CameraZoomIn([yards])` (`0x50b400` → `0x50fc60`), 1.0 when absent.
     CameraZoomIn(f32),
     /// `CameraZoomOut([yards])` (`0x50b450` → `0x50fcd0`), 1.0 when absent.
@@ -479,10 +481,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     }
     // `Jump` (`0x513bd0`), `ToggleRun` (`0x513d50`) and `ToggleAutoRun` (`0x513de0`) open on the
     // same gate; their further refusals (a dead or rooted player) are the engine's, as for the key.
-    let fired: [(&str, FiredInput); 3] = [
+    let fired: [(&str, FiredInput); 4] = [
         ("Jump", FiredInput::Jump),
         ("ToggleRun", FiredInput::ToggleRun),
         ("ToggleAutoRun", FiredInput::ToggleAutoRun),
+        ("ToggleWorldPause", FiredInput::WorldPause),
     ];
     for (name, input) in fired {
         g.set(

@@ -14,7 +14,8 @@ pub struct OverlayPlugin;
 
 impl Plugin for OverlayPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn).add_systems(Update, update);
+        app.add_systems(Startup, (spawn, spawn_paused))
+            .add_systems(Update, (update, show_paused));
     }
 }
 
@@ -150,5 +151,49 @@ fn update(
         for mut node in &mut fill {
             node.width = Val::Percent(f * 100.0);
         }
+    }
+}
+
+/// The banner while the world is paused.
+#[derive(Component)]
+struct PausedBanner;
+
+fn spawn_paused(mut commands: Commands, assets: Res<AssetServer>) {
+    commands
+        .spawn((
+            PausedBanner,
+            Visibility::Hidden,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Percent(16.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            // Above the world and the interface, below the startup cover.
+            GlobalZIndex(i32::MAX - 1),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Text::new("Paused"),
+                TextFont {
+                    font: assets.load(FONT),
+                    font_size: 42.0,
+                    ..default()
+                },
+                TextColor(GOLD),
+                TextShadow::default(),
+            ));
+        });
+}
+
+fn show_paused(mut banner: Query<&mut Visibility, With<PausedBanner>>) {
+    let want = if benilla_app::world_paused() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    for mut visibility in &mut banner {
+        visibility.set_if_neq(want);
     }
 }

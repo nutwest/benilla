@@ -25,7 +25,9 @@ pub(crate) mod handlers;
 pub(crate) mod io;
 pub(crate) mod motion;
 mod objects;
+mod party_pause;
 mod party_swap;
+mod pause_gate;
 #[cfg(test)]
 pub(crate) use objects::answer_item;
 pub(crate) use objects::continue_refusal_walk;
@@ -48,6 +50,10 @@ pub(crate) use apply::apply_net_updates;
 pub(crate) use game_time::GameTime;
 pub(crate) use game_time::{clock_tick, GameTimeLive, ServerTime};
 pub(crate) use handlers::NetHandlerApp;
+pub(crate) use party_pause::{
+    default_binding as pause_default_binding, register_binding as register_pause_binding,
+};
+pub use party_pause::{enable_world_pause, world_paused};
 
 pub(crate) use io::LoginRequest;
 use motion::{
@@ -82,6 +88,7 @@ impl Plugin for NetPlugin {
         game_time::register(app);
         world::register(app);
         session::register(app);
+        party_pause::register(app);
         party_swap::register(app);
         objects::register(app);
         crate::names::net::register(app);
