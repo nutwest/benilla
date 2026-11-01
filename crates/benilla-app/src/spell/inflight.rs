@@ -517,7 +517,7 @@ impl SelfCancel<'_> {
     }
 
     fn cancel(&mut self, esc: bool, moved: bool, mover_is_player: bool) {
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let self_e = self.self_entity();
         // Esc stops one thing, auto-repeat first (`0x6e6e80`).
         let esc = if esc && self.auto_repeat.0.is_some() {
@@ -617,7 +617,7 @@ mod tests {
     /// handler `0x6e7550` never touches.
     #[test]
     fn suppressing_the_channel_bar_still_arms_the_running_channel() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         // Blood Siphon 24322, a suppressed row.
         let mut channel = ActiveChannel::default();
         channel.start(24322, 8_000, t0);
@@ -661,7 +661,7 @@ mod tests {
         app.world_mut().resource_mut::<ActiveChannel>().start(
             ARCANE_MISSILES,
             5_000,
-            Instant::now(),
+            benilla_world::world_clock::now(),
         );
         assert!(
             !current(&mut app, ARCANE_MISSILES),
@@ -752,9 +752,11 @@ mod tests {
         assert_eq!(item_of(&mut app), Some(HEARTHSTONE));
         app.world_mut().entity_mut(item).despawn();
         assert_eq!(item_of(&mut app), None, "the object is gone");
-        app.world_mut()
-            .resource_mut::<PendingCast>()
-            .push(FIREBALL, None, Instant::now());
+        app.world_mut().resource_mut::<PendingCast>().push(
+            FIREBALL,
+            None,
+            benilla_world::world_clock::now(),
+        );
         assert_eq!(item_of(&mut app), None, "a spell's own cast");
     }
 
@@ -766,7 +768,7 @@ mod tests {
 
     #[test]
     fn arming_closes_the_guard_and_a_matching_resolution_opens_it() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut g = PendingCast::default();
         g.push(FIREBALL, None, t0);
         assert!(
@@ -781,7 +783,7 @@ mod tests {
     /// `ITEM_FLAG_PLAYERCAST` (`0x40`); a spell has no item and is always pushed.
     #[test]
     fn an_item_use_enters_the_slot_only_with_the_playercast_flag() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut g = PendingCast::default();
         g.push(FIREBALL, Some(0), t0);
         assert!(!g.in_flight(), "flags 0 (a potion) push nothing");
@@ -796,7 +798,7 @@ mod tests {
 
     #[test]
     fn a_different_spells_resolution_leaves_the_guard_closed() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut g = PendingCast::default();
         g.push(FIREBALL, None, t0);
         g.clear_if(FIREBALL + 1); // a triggered proc's GO for some other spell mid-cast
@@ -930,9 +932,11 @@ mod tests {
             app.world_mut()
                 .resource_mut::<PendingCast>()
                 .fill_record_spell(FIREBALL);
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
             mark_casting(&mut app, FIREBALL);
 
             run(&mut app, true);
@@ -978,9 +982,11 @@ mod tests {
                     ..Default::default()
                 },
             )]));
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
 
             run(&mut app, true);
 
@@ -997,13 +1003,15 @@ mod tests {
         #[test]
         fn an_uncataloged_spell_is_not_cancelled() {
             let (mut app, rx) = harness(HashMap::new());
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
             app.world_mut().resource_mut::<ActiveChannel>().start(
                 ARCANE_MISSILES,
                 5_000,
-                Instant::now(),
+                benilla_world::world_clock::now(),
             );
 
             run(&mut app, true);
@@ -1035,13 +1043,15 @@ mod tests {
                 ),
             ]));
             let start = |app: &mut App| {
-                app.world_mut()
-                    .resource_mut::<PendingCast>()
-                    .push(FIREBALL, None, Instant::now());
+                app.world_mut().resource_mut::<PendingCast>().push(
+                    FIREBALL,
+                    None,
+                    benilla_world::world_clock::now(),
+                );
                 app.world_mut().resource_mut::<ActiveChannel>().start(
                     MIND_CONTROL,
                     60_000,
-                    Instant::now(),
+                    benilla_world::world_clock::now(),
                 );
             };
             let sent = |rx: &crossbeam_channel::Receiver<crate::net::ClientCommand>| {
@@ -1101,9 +1111,11 @@ mod tests {
                     ..Default::default()
                 },
             )]));
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
 
             run(&mut app, false);
 
@@ -1117,7 +1129,7 @@ mod tests {
         fn esc_cannot_stop_a_channel() {
             let (mut app, rx) = harness(HashMap::new());
             app.insert_non_send_resource(UiScript::new().unwrap());
-            let now = Instant::now();
+            let now = benilla_world::world_clock::now();
             app.world_mut()
                 .resource_mut::<ActiveChannel>()
                 .start(ARCANE_MISSILES, 5_000, now);
@@ -1147,9 +1159,11 @@ mod tests {
             let (mut app, rx) = harness(HashMap::new());
             app.insert_non_send_resource(UiScript::new().unwrap());
             app.world_mut().resource_mut::<AutoRepeatActive>().0 = Some(AUTO_SHOT);
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
             mark_casting(&mut app, FIREBALL);
 
             // Press 1 stops the auto-repeat only.
@@ -1456,7 +1470,7 @@ mod tests {
                     ..Default::default()
                 },
             )]));
-            let now = Instant::now();
+            let now = benilla_world::world_clock::now();
             app.world_mut()
                 .resource_mut::<ActiveChannel>()
                 .start(ARCANE_MISSILES, 5_000, now);
@@ -1508,9 +1522,11 @@ mod tests {
             app.world_mut()
                 .resource_mut::<PendingCast>()
                 .fill_record_spell(FROSTBOLT);
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
             mark_casting(&mut app, FROSTBOLT);
 
             app.world_mut()
@@ -1543,9 +1559,11 @@ mod tests {
             app.world_mut()
                 .resource_mut::<PendingCast>()
                 .fill_record_spell(FIREBALL);
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
             mark_casting(&mut app, FIREBALL);
             run(&mut app, true);
             assert!(matches!(
@@ -1573,9 +1591,11 @@ mod tests {
             app.world_mut()
                 .resource_mut::<PendingCast>()
                 .fill_record_spell(FIREBALL);
-            app.world_mut()
-                .resource_mut::<PendingCast>()
-                .push(FIREBALL, None, Instant::now());
+            app.world_mut().resource_mut::<PendingCast>().push(
+                FIREBALL,
+                None,
+                benilla_world::world_clock::now(),
+            );
             mark_casting(&mut app, FIREBALL);
             run(&mut app, true);
             assert!(matches!(
@@ -1603,7 +1623,7 @@ mod tests {
         fn a_cast_with_no_answer_holds_the_slot_until_esc() {
             let (mut app, rx) = harness(HashMap::from([(FIREBALL, SpellDisplay::default())]));
             app.insert_non_send_resource(UiScript::new().unwrap());
-            let sent = Instant::now()
+            let sent = benilla_world::world_clock::now()
                 .checked_sub(Duration::from_secs(60))
                 .expect("a clock a minute old");
             app.world_mut()
@@ -1629,7 +1649,7 @@ mod tests {
 
     #[test]
     fn active_channel_tracks_the_wire_lifecycle() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut ch = ActiveChannel::default();
         assert_eq!(ch.current(t0), None);
 

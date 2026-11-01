@@ -376,7 +376,7 @@ impl CastLadder<'_, '_> {
                 target: bound.block(),
             },
         };
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         // The spell its attempt pushed stays in the slot through the send, as for a cast sent at
         // its attempt.
         if self.ground.in_slot() == Some(spell_id) {
@@ -696,7 +696,7 @@ fn send_spell_cast(
             return;
         }};
     }
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     let def = spells.and_then(|s| s.catalog.get(spell_id));
     // TryCast's first branch (`6e4bce`, ahead of every gate): an `Effect[0] == TRADE_SKILL` cast
     // never reaches the wire; the crafting window opens instead.
@@ -1994,9 +1994,11 @@ mod tests {
     fn a_shot_pressed_mid_cast_is_refused_and_the_cast_keeps_its_guard() {
         const FROSTBOLT: u32 = 116;
         let (mut world, rx) = combat_world(false);
-        world
-            .resource_mut::<crate::spell::PendingCast>()
-            .push(FROSTBOLT, None, Instant::now());
+        world.resource_mut::<crate::spell::PendingCast>().push(
+            FROSTBOLT,
+            None,
+            benilla_world::world_clock::now(),
+        );
 
         send_at(&mut world, AUTO_SHOT, MOB);
 
@@ -2083,9 +2085,11 @@ mod tests {
     fn the_rungs_above_the_attack_pick_refuse_before_it() {
         use benilla_protocol::ObjectFields;
         let (mut world, rx) = combat_world(false);
-        world
-            .resource_mut::<crate::spell::PendingCast>()
-            .push(SERPENT_STING, None, Instant::now());
+        world.resource_mut::<crate::spell::PendingCast>().push(
+            SERPENT_STING,
+            None,
+            benilla_world::world_clock::now(),
+        );
         let held = world
             .run_system_once(|mut ladder: CastLadder| {
                 ladder.send_spell(RAPTOR_STRIKE, &ctx(), false);
@@ -2426,7 +2430,7 @@ mod tests {
             0,
             &use_spell,
             None,
-            Instant::now(),
+            benilla_world::world_clock::now(),
         );
         world.spawn((
             SelfPlayer,
@@ -2556,7 +2560,7 @@ mod tests {
             6948,
             &use_spell,
             None,
-            Instant::now(),
+            benilla_world::world_clock::now(),
         );
 
         send(&mut world, HEARTHSTONE, HEARTH_COMMIT);
@@ -2603,7 +2607,7 @@ mod tests {
             7001,
             &other,
             None,
-            Instant::now(),
+            benilla_world::world_clock::now(),
         );
 
         send(&mut world, HEARTHSTONE, HEARTH_COMMIT);
@@ -2784,7 +2788,7 @@ mod tests {
             0,
             &use_spell,
             None,
-            Instant::now(),
+            benilla_world::world_clock::now(),
         );
         send(&mut world, FIREBALL, CastCommit::Spell);
         assert!(rx.try_recv().is_err());
@@ -3114,7 +3118,7 @@ mod tests {
             0,
             &use_spell,
             None,
-            Instant::now(),
+            benilla_world::world_clock::now(),
         );
         // ...and a different cast in flight.
         send(&mut world, HEARTHSTONE, CastCommit::Spell);

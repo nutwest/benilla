@@ -1091,7 +1091,7 @@ mod tests {
                 },
             )]),
         };
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cooldowns = crate::spell::Cooldowns::default();
         cooldowns.start_spell(SPELL, &d, 0, t0, None);
         let store = ObjectStore(benilla_protocol::ObjectFields::default());
@@ -1216,7 +1216,7 @@ mod tests {
                     items,
                     Ask::New(commands),
                     &cooldowns,
-                    (Instant::now(), 0.0),
+                    (benilla_world::world_clock::now(), 0.0),
                 )
                 .expect("a recipe");
                 (r.reagents[0].have, r.tools[0].1)
@@ -1360,7 +1360,7 @@ mod tests {
         let d = mooncloth();
         app.world_mut()
             .resource_mut::<crate::spell::Cooldowns>()
-            .start_spell(SPELL, &d, 0, Instant::now(), None);
+            .start_spell(SPELL, &d, 0, benilla_world::world_clock::now(), None);
         assert!(heard(&mut app).is_empty());
     }
 
@@ -1948,8 +1948,8 @@ mod tests {
         assert!(
             app.world()
                 .resource::<crate::spell::Cooldowns>()
-                .info(2963, 0, None, Instant::now())
-                .ui_triple(Instant::now(), 0.0)
+                .info(2963, 0, None, benilla_world::world_clock::now())
+                .ui_triple(benilla_world::world_clock::now(), 0.0)
                 .is_some(),
             "the go's own cooldown starts after the recast"
         );

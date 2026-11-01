@@ -1440,7 +1440,7 @@ mod tests {
                 world.resource_mut::<crate::spell::PendingCast>().push(
                     DRAIN_LIFE,
                     None,
-                    std::time::Instant::now(),
+                    benilla_world::world_clock::now(),
                 );
             }
             let want: (Vec<&str>, Option<u64>) = if followed {

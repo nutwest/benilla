@@ -3006,7 +3006,7 @@ mod tests {
                 world.resource_mut::<crate::spell::PendingCast>().push(
                     FIREBALL,
                     None,
-                    std::time::Instant::now(),
+                    benilla_world::world_clock::now(),
                 );
             }
             world.resource_mut::<crate::ui_cast::CastReports>().clear();

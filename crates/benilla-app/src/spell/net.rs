@@ -695,7 +695,7 @@ pub(crate) fn cooldown_query_answered(
     mut cooldowns: ResMut<Cooldowns>,
 ) {
     let catalog = spells.as_deref().map(|s| &s.catalog);
-    cooldowns.query_answered(entry, &items, catalog, Instant::now());
+    cooldowns.query_answered(entry, &items, catalog, benilla_world::world_clock::now());
 }
 
 /// `SMSG_INVENTORY_CHANGE_FAILURE`'s cast leg (`0x5e3a45`-`0x5e3ab3`): a refusal whose first item
@@ -882,7 +882,7 @@ fn spell_book(
         actions.spells.insert(spell_id);
         list_learn(spell_id, actions, spells);
     }
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     for cd in &initial_cooldowns {
         let spell_id = u32::from(cd.spell_id);
         let spell = spells.and_then(|s| s.catalog.get(spell_id));
@@ -1127,7 +1127,7 @@ fn cast_result(
     seq: u64,
 ) -> Option<u32> {
     debug!("net: cast result — spell {spell_id} success={success} reason={reason:?}");
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     if !success {
         // `HandleCastFailed 0x6e1a00` clears the GCD armed at send (`0x6e1d83 → 0x6e1630`), and the
         // bit-25 revert after it drops a parked record; the spell's own recovery starts at
@@ -1348,7 +1348,9 @@ fn spell_start(
     if cast_time_ms > 0 {
         commands.entity(e).insert(Casting {
             spell_id,
-            until: Some(Instant::now() + Duration::from_millis(u64::from(cast_time_ms))),
+            until: Some(
+                benilla_world::world_clock::now() + Duration::from_millis(u64::from(cast_time_ms)),
+            ),
         });
     }
     // `0x6ec220`'s precast: another unit's unless the packet's flag bit 0 is set (`0x6e78f8`,
@@ -1704,7 +1706,7 @@ pub(super) fn go_cooldown_inserts(
     let Some(display) = spells.and_then(|s| s.catalog.get(spell_id)) else {
         return;
     };
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     // The item leg held the cooldown for its record ([`item_go_cooldown`]).
     let mut pended = false;
     if self_guid.0 == Some(caster) {
@@ -1868,7 +1870,7 @@ fn spell_cooldowns(
     let pairs = pairs
         .into_iter()
         .map(|(id, ms)| (id, ms, spells.and_then(|s| s.catalog.get(id))));
-    cooldowns.apply_spell_cooldowns(pairs, mods, pad, Instant::now());
+    cooldowns.apply_spell_cooldowns(pairs, mods, pad, benilla_world::world_clock::now());
 }
 
 /// `SMSG_ITEM_COOLDOWN` (`0x6e95d0`): the fixed 30 s use cooldown, keyed on the item instance's
@@ -1888,7 +1890,9 @@ fn item_cooldown(
         .and_then(|&e| stores.get(e).ok())
         .and_then(|s| s.0.object_entry());
     match entry {
-        Some(entry) => cooldowns.apply_wire_item_cooldown(entry, spell_id, Instant::now()),
+        Some(entry) => {
+            cooldowns.apply_wire_item_cooldown(entry, spell_id, benilla_world::world_clock::now())
+        }
         None => cooldowns.flush_item_leg(),
     }
 }
@@ -1897,7 +1901,7 @@ fn item_cooldown(
 /// timers now (Stealth ends, Feign Death drops).
 fn cooldown_event(spell_id: u32, caster: u64, cooldowns: &mut Cooldowns) {
     debug!("net: cooldown event — spell {spell_id} on {caster:#x}");
-    cooldowns.cooldown_event(spell_id, Instant::now());
+    cooldowns.cooldown_event(spell_id, benilla_world::world_clock::now());
 }
 
 /// `SMSG_CLEAR_COOLDOWN` (`0x6e9670` → `0x6e3050(force=1)`): remove the spell's record outright.
@@ -1921,7 +1925,7 @@ fn channel_start(
     channel: &mut ActiveChannel,
     reports: &mut CastReports,
 ) {
-    channel.start(spell_id, duration_ms, Instant::now());
+    channel.start(spell_id, duration_ms, benilla_world::world_clock::now());
     reports.bar(CastBarEdge::ChannelStart {
         spell_id,
         duration_ms,
@@ -1930,7 +1934,7 @@ fn channel_start(
 
 /// `MSG_CHANNEL_UPDATE`: the running channel's remaining time (`0` is its stop edge).
 fn channel_update(remaining_ms: u32, channel: &mut ActiveChannel, reports: &mut CastReports) {
-    channel.update(remaining_ms, Instant::now());
+    channel.update(remaining_ms, benilla_world::world_clock::now());
     reports.bar(CastBarEdge::ChannelUpdate { remaining_ms });
 }
 
@@ -2014,7 +2018,7 @@ mod tests {
             attributes: 0x0200_0000,
             ..Default::default()
         };
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cooldowns = Cooldowns::default();
         cooldowns.start_gcd(15473, &form, t0, &crate::spell::SpellModifiers::default());
         std::thread::sleep(Duration::from_millis(40));
@@ -2041,7 +2045,7 @@ mod tests {
         };
         let form_row = form();
         for (reason, held) in [(0x17, false), (0x0a, false), (0x3c, true)] {
-            let t0 = Instant::now();
+            let t0 = benilla_world::world_clock::now();
             let mut s = CastSeq::new();
             s.app.insert_resource(catalog_with(SHADOWFORM, form()));
             s.app.world_mut().resource_mut::<Cooldowns>().start_gcd(
@@ -3273,7 +3277,7 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
 
         const BLIZZARD: u32 = 10;
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
 
         let mut app = App::new();
         app.add_message::<CastEvent>()
@@ -3494,7 +3498,7 @@ mod tests {
             )
             .unwrap();
         crate::creature_anim::apply_unit_edits(app.world_mut());
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let armed = |c: &Cooldowns| c.info(SPELL, 0, Some(&display()), now).duration_ms;
         let world = app.world();
         (
@@ -4189,9 +4193,11 @@ mod tests {
                 app.world_mut()
                     .resource_mut::<QueuedMeleeSpell>()
                     .push(r.queued, None);
-                app.world_mut()
-                    .resource_mut::<PendingCast>()
-                    .push(id, None, Instant::now());
+                app.world_mut().resource_mut::<PendingCast>().push(
+                    id,
+                    None,
+                    benilla_world::world_clock::now(),
+                );
             } else if let Some(id) = r.queued {
                 app.world_mut().resource_mut::<QueuedMeleeSpell>().arm(id);
             }
