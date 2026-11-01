@@ -9,7 +9,8 @@
 //! log after the run.
 //!
 //! - Six swaps out of combat, two rounds of the party.
-//! - Two fights, each swapped mid-combat; the swapped-away character must fight on as a bot.
+//! - Two fights, each swapped mid-combat; the swapped-away character must fight on as a bot. Not
+//!   in a `WOW_UNATTENDED=1` run.
 //! - Per swap: the time from the key to playing the new character; the streamed unit count
 //!   before and after (no world despawn).
 
@@ -137,7 +138,13 @@ pub(super) fn checks(
         settle(Duration::from_secs(1));
     }
 
-    for fight_no in 1..=2 {
+    // No unattended combat probes: such a run checks the swaps alone.
+    let fights = if std::env::var_os("WOW_UNATTENDED").is_some() {
+        0
+    } else {
+        2
+    };
+    for fight_no in 1..=fights {
         let known: Vec<u64> = sup.units.lock().unwrap().iter().map(|u| u.guid).collect();
         sup.ask(SessionRequest::Command(format!(".npc summon {TEST_MOB}")));
         let since = Instant::now();
