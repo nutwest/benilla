@@ -105,6 +105,7 @@ pub(crate) struct UiAuraPlugin;
 
 impl Plugin for UiAuraPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<Time<benilla_world::world_clock::WorldClock>>();
         app.init_resource::<AuraDurations>()
             .init_resource::<PlayerAuraCache>()
             .init_resource::<AuraFeedMemory>()

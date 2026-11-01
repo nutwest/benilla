@@ -1040,6 +1040,7 @@ fn a_flag_still_remote_is_left_where_the_wire_put_it() {
     use bevy::transform::TransformPlugin;
 
     let mut app = App::new();
+    app.init_resource::<Time<benilla_world::world_clock::WorldClock>>();
     // `WorldCollision` needs the trace exclusions the world plugins would initialise.
     app.init_resource::<benilla_world::collision::MoverTraceExclusions>();
     app.add_plugins((

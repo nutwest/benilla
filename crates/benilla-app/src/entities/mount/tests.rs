@@ -296,10 +296,10 @@ fn a_mount_child_carries_its_riders_arrival() {
     use bevy::ecs::world::CommandQueue;
 
     let mut app = App::new();
-    app.init_resource::<Time>()
+    app.init_resource::<Time<Real>>()
         .add_systems(Update, crate::entities::stamp_arrivals);
     app.world_mut()
-        .resource_mut::<Time>()
+        .resource_mut::<Time<Real>>()
         .advance_to(std::time::Duration::from_secs(5));
     let rider = app
         .world_mut()

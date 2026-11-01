@@ -109,6 +109,11 @@ pub(crate) const PROBE_VARS: &[ProbeVar] = &[
         wall_clock: false,
     },
     ProbeVar {
+        name: "WOW_PROBE_LUA_EACH_VM",
+        purpose: "=1 — run the chunk again in every new VM",
+        wall_clock: false,
+    },
+    ProbeVar {
         name: "WOW_PROBE_LUA_AGAIN",
         purpose: "<secs> — how long after every LATER world entry (a relog) the chunk runs again (default 4)",
         wall_clock: false,

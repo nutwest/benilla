@@ -160,7 +160,9 @@ fn run(world: &mut World, entry: Entry) {
 /// item cache's no-op (`0x5dea58`-`0x5dea81`) signal nothing.
 fn arrival(world: &mut World, control_gained: bool) {
     // A party swap's arrival: the rebind follows, and the target stays.
-    let party = world.resource::<PartyRebindOwed>().0;
+    let party = world
+        .get_resource::<PartyRebindOwed>()
+        .is_some_and(|owed| owed.0);
     leg(world, seat_player);
     replay_book(world);
     // `0x5deac2` → `0x4b2fd0(1, 0)`: the book sorted, `SPELLS_CHANGED` (`0x4b302a`).

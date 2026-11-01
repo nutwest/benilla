@@ -418,6 +418,8 @@ pub(super) const FILLED_THROUGH_A_READ: &[&str] = &[
 /// in system order, or a system that pushes onto a lane off it at its own place, passes every
 /// check here unseen.
 pub(super) const READ_ONLY_TO_HANDLERS: &[&str] = &[
+    // The world's seconds, which `frame_pace` advances ahead of every handler.
+    "Time<benilla_world::world_clock::WorldClock>",
     // The character's language skills and word pools, which a page's show rewrites it by
     // (`0x4e3856`). Not read-only in substance: `feed_language_skills` recomputes the skills
     // every frame, after the dispatch, from the skill lines the handlers write, where the

@@ -736,6 +736,7 @@ mod under_floor {
     /// The terrain in, the building's floor not yet, and one mover at the wire's Z.
     fn half_arrived_world(flags: u32) -> (App, Entity) {
         let mut app = App::new();
+        app.init_resource::<Time<benilla_world::world_clock::WorldClock>>();
         // `WorldCollision` needs the trace exclusions the world plugins would initialise.
         app.init_resource::<benilla_world::collision::MoverTraceExclusions>();
         app.add_plugins((

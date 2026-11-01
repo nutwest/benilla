@@ -973,12 +973,12 @@ mod tests {
     #[test]
     fn an_appear_ramp_runs_from_arrival_never_from_behind_the_cover() {
         let mut app = App::new();
-        app.init_resource::<Time>()
+        app.init_resource::<Time<Real>>()
             .init_resource::<crate::view::Viewer>()
             .add_systems(Update, arm_appear_fade);
         let frame = |app: &mut App, secs: f32, covered: bool| {
             app.world_mut()
-                .resource_mut::<Time>()
+                .resource_mut::<Time<Real>>()
                 .advance_to(std::time::Duration::from_secs_f32(secs));
             app.world_mut()
                 .resource_mut::<crate::view::Viewer>()
@@ -1041,7 +1041,7 @@ mod tests {
         use bevy::ecs::system::SystemState;
 
         let mut world = World::new();
-        world.init_resource::<Time>();
+        world.init_resource::<Time<Real>>();
         // The default viewer covers nothing, so every pending fade arms this frame.
         world.init_resource::<crate::view::Viewer>();
         let doomed = world
@@ -1416,7 +1416,7 @@ mod inversion_tests {
     #[test]
     fn a_declared_fade_and_the_self_feather_both_reach_the_composed_alpha() {
         let mut app = App::new();
-        app.init_resource::<Time>();
+        app.init_resource::<Time<Real>>();
         app.insert_resource(crate::view::Viewer {
             self_fade: 0.5,
             ..default()
