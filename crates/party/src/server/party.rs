@@ -23,6 +23,7 @@ use super::setup::Secrets;
 use super::{Phase, Supervisor};
 
 mod m1c_test;
+mod pause_test;
 mod swap_test;
 
 /// The party's characters, by account: name, `ChrClasses` id, class name. All human, so a new
@@ -110,6 +111,11 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
             warn!("party: swap checks failed: {err:#}");
         }
         record_played(layout, members[active].name);
+    }
+    if std::env::var_os("PARTY_PAUSE_TEST").is_some() {
+        if let Err(err) = pause_test::checks(sup, layout, &members, active) {
+            warn!("party: pause checks failed: {err:#}");
+        }
     }
     if std::env::var_os("PARTY_M1C_TEST").is_some() {
         if let Err(err) = m1c_test::checks(sup, layout, db, &members, &mut active) {

@@ -78,7 +78,7 @@ impl ServerLog {
     }
 
     /// The first new line `pick` accepts, within `limit`; lines before it are passed over.
-    fn wait_for(
+    pub(super) fn wait_for(
         &mut self,
         sup: &Supervisor,
         limit: Duration,
@@ -133,7 +133,7 @@ pub(super) fn status(
     log: &mut ServerLog,
     members: &[Member],
 ) -> anyhow::Result<HashMap<&'static str, Status>> {
-    sup.ask(SessionRequest::Command(".party status".into()));
+    sup.ask(SessionRequest::PartyCommand(".party status".into()));
     let mut out = HashMap::new();
     while out.len() < members.len() {
         let line = log.wait_for(sup, Duration::from_secs(5), |l| {

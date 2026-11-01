@@ -13,6 +13,7 @@ mod db;
 mod fetch;
 mod layout;
 mod party;
+mod picture_spike;
 mod procs;
 mod setup;
 
@@ -231,7 +232,8 @@ impl Plugin for ServerPlugin {
         app.insert_resource(Server(Arc::clone(&self.0)))
             .add_systems(Startup, start)
             .add_systems(Update, (bridge, sample_units, report_in_world))
-            .add_systems(First, walk);
+            .add_systems(First, walk)
+            .add_plugins(picture_spike::PictureSpikePlugin);
     }
 }
 

@@ -89,6 +89,10 @@ mechanism.** It could still be an optional "direct steer" in a later milestone.
 
 ### 1.3 Pause: which client clocks must freeze, and how pause reaches the client
 
+This section is the first survey. §2.2 is the design, read from the fork's source and the client,
+and it replaces this section where they differ: no deadline shift on resume, and a pause opcode
+instead of a chat reply.
+
 **There is no pause in 1.12 or in vmangos.** No opcode exists for it, so pause must be added on
 both sides.
 
@@ -186,9 +190,9 @@ Not portable: the grid, the flow field, waves, the economy, structures, enemy AI
   - The loading screen dominated: the world is torn down at logout and streamed again, on the same
     map. Next came the login handshake and the bot round trips.
   - The session swap removes all of these.
-- **Pause is server plus client.** A vmangos `.pause` patch (§1.3) is paired with a pausable world
-  clock and an input freeze in benilla (E2). The RTS camera runs on real time during the pause.
-  Orders issued while paused are queued and run on resume.
+- **Pause is server plus client** (§2.2). A frozen clock in the vmangos fork is paired with a
+  pausable world clock and an input freeze in benilla (E2). The RTS camera runs on real time during
+  the pause. Orders issued while paused are queued and run on resume.
 - **Client code lives in a new crate, `crates/party`,** launched through `benilla_app::run_with`
   ("Building on top", CONTRIBUTING). Settings live under `benilla_app::config_dir()`.
 
@@ -361,6 +365,184 @@ If any of these crashes the server or desyncs it, the fallback keeps the swap bu
 vmangos's existing reconnect path. That path is tested for sockets, and the account check would
 be relaxed for party accounts. It costs a little more time.
 
+### 2.2 Pause and the RTS camera
+
+Planned, not built. Read from the fork's source (`party` branch) and the client on 2026-11-01;
+nothing here has been run.
+
+**The approach: stop the clocks, don't shift the deadlines.** Both sides already read time through
+a few central places. Freezing those means an absolute deadline simply stays in the future, with
+nothing to walk and adjust on resume.
+
+**Server: what holds time.**
+
+| State | How it is held | On pause |
+|---|---|---|
+| Aura durations, periodic ticks (`SpellAuraHolder`, `Aura`) | Relative, counted down by `diff` | Stops with the map update |
+| Spell cast and channel timers (`Spell::m_timer`) | Relative | Stops with the map update |
+| Swing timers, AI timers, `m_nextSave`, corpse decay, mirror timers | Relative | Stops with the map update |
+| Spell and item cooldowns, GCD (`CooldownData`, `m_GCDCatMap`) | Absolute `TimePoint`, read from `World::m_currentTime` | Freeze `m_currentTime` |
+| Diminishing returns, combat-check phases, spell-delay hits, `stime`, pending movement changes | Absolute ms from `WorldTimer::getMSTime()` | Freeze `getMSTime` |
+| Transports | `sWorld.GetCurrentMSTime()` since creation | Freeze `getMSTime` |
+| Map update diffs (`m_lastMapUpdate`, `m_lastPlayersUpdate`, `m_lastCellsUpdate`) | `getMSTime` deltas | Freeze `getMSTime`, or the first tick after a pause applies the whole span at once |
+| Creature and game-object respawns, corpse removal, trap and door cooldowns, leash and combat-start times | Absolute `time_t` from raw `time(nullptr)` (about 40 sites in `Creature.cpp` and `GameObject.cpp`/`.h`) | **Must be edited:** read `sWorld.GetGameTime()` instead |
+| Duels, summon expiry, the `Player.cpp` deadline sites, spell-effect respawns | Raw `time(nullptr)` (about 10 gameplay sites) | The same edit |
+| Game clock (`World::m_gameTime`) | `time(nullptr)` in `_UpdateGameTime` | Freeze; day/night is sent from this value |
+| Auctions, mail, instance resets, battleground queues, game events | Wall time | **Left on wall time.** Their timers tick on `diff`, so nothing fires during a pause; an overdue one fires on the first tick after resume |
+
+**Server: the freeze.**
+- One pause clock in `shared/Util.cpp`: `WorldTimer::getMSTime()` returns real time minus the total
+  paused, and holds still while paused. It uses atomics, because the network and async threads
+  read it too.
+- `World::Update` takes `m_currentTime` and `m_gameTime` from the same offset.
+- The world loop needs no special case. With a frozen clock `diff` is 0, so it keeps ticking every
+  `World.TickMs`, and:
+  - `MapManager::Update`'s interval timer never passes, so no map, unit, AI, bot, aura or spell
+    update runs;
+  - the World messager, `UpdateSessions`, socket pings and the async chat thread keep running, so
+    the connection stays up and `.party` commands still work.
+- Packets on the movement, spell and map queues are not lost. They are handled inside
+  `Map::Update`, so they wait and run in wire order on resume.
+- Spell, cast and movement commands therefore need no server refusal, but the client must not send
+  them while paused, or they all fire at once on resume.
+- **Persisted deadlines.** A respawn or cooldown saved to the database after a pause is in paused
+  time, so after a restart it comes due early by the total paused. That's harmless for a
+  single-player game, and the offset could be saved later if it ever matters.
+- **Exit.** `server exit` calls `World::StopNow`, which reads no clock, so the launcher's shutdown
+  works while paused. A delayed shutdown timer would not count down, but the launcher doesn't use
+  one.
+- **A lost client** must auto-resume when its socket closes.
+
+**How the state reaches the client: `SMSG_PARTY_PAUSE`, 0x401.**
+- **Request:** `.party pause on|off`, sent in party chat through `SessionRequest::PartyCommand`.
+  That path reaches the async thread, which runs while paused. A say would not: its queue is
+  handled in `Map::Update`, so `.party pause off` would never run.
+- **Execution:** the handler checks and queues on the World messager, as the swap does. It refuses
+  during a teleport, a logout or a flight.
+- **Reply:** `uint8 paused`, `uint32 server ms`. An opcode, not a chat line, so no chat parsing
+  (E5) is needed and nothing shows in the chat frame.
+- **The server's reply is what freezes the client**, about 30–60 ms after the key (an estimate
+  from the swap's path: the 20 ms chat poll, the 10 ms tick, a frame each way). Packets already
+  in flight land before the freeze, so the two sides stop at nearly the same world state. Resume
+  works the same way. A client that froze on the key would drop out of step with a world still
+  running.
+
+**Client: one world clock.** Today's four sources, and where each goes:
+
+| Source | What's there | Plan |
+|---|---|---|
+| `Res<Time>` (130 sites) | Creature and rig animation, particles, doodad animation, lighting | `Time<Virtual>::pause()`. `frame_pace` already respects a paused clock. |
+| `FrameStep` | The sky (`tick_game_time`), `OnUpdate`'s elapsed, `GetTime`'s step | Split: `delta` stays real, a new `world_delta` is 0 while paused |
+| `GetTime` | Cast bar, cooldown sweep | Advance by `world_delta`; `OnUpdate` keeps real elapsed |
+| `Instant::now()` | Spline sampling (`net/motion/spline.rs`), cast state (`spell/inflight.rs`, `cast_send.rs`), cooldowns (`spell/cooldowns.rs`, `spell/net.rs`), `transport.rs`, `items.rs`, `death/mod.rs` | A new `benilla_world::world_clock::now()` |
+| `Time<Real>` | Auras (`ui_aura.rs`), remote motion (`net/motion/remote.rs`), `death/mod.rs`, `target/died.rs`, `weather`, `mat_anim` | Move to the world clock; leave UI, billing, chat-idle and probe uses alone |
+
+- **`world_clock::now()` returns an `Instant`:** real time minus the total paused, held still while
+  paused. The stores keep their types, and a mid-flight spline's `start` stays valid with nothing
+  shifted.
+- It is a process-wide atomic, because several sites are free functions with no resource access.
+- **`UiClock`'s anchor moves to the world clock.** Every `Instant`-to-`GetTime` conversion already
+  goes through that pair, so a frozen `GetTime` and a frozen world clock stay consistent.
+- **The sweep:** a source-scanning test, like the existing guard tests, lists the modules that must
+  not call `Instant::now()` directly, so a new site can't slip past.
+- **Sound keeps running:** music and ambience play on. Rendering, input, net threads and the UI keep
+  their real clocks.
+
+**The UI while frozen.**
+- Lua keeps running, and `OnUpdate` still gets real elapsed. Menus, tooltips, the map, bags and
+  chat all work.
+- Freezing `GetTime` is safe for the stock UI: of the 32 FrameXML Lua files read, only the cast bar,
+  `Cooldown.lua` and a chat tell-alert use it, and the first two are meant to freeze. The rest time
+  themselves on elapsed. Not every FrameXML file was read, and addons may differ.
+- Both UI entry points need the split. `UiScript::tick` and `tick_covered` each advance the clock
+  through `advance_clock_and_events`, so a frame with the layer covered must not move `GetTime`
+  either.
+- The lanes are unchanged; packets go on firing UI events.
+
+**Client input.**
+- `control` still runs, because the camera lives there. Pause joins its existing "not driving"
+  gate (`server_riding`, `control_lost`, `reseat`), which keeps the camera on the body and sends no
+  movement.
+- Commands that would queue on the server are refused at one place, a `paused_allows(&ClientCommand)`
+  with an exhaustive match, so a new command must declare itself. Refused: movement, casts, attack
+  swing, item use, interaction, sit and stand.
+- Allowed: chat, `.party` commands, and the mover claim.
+- Selecting a target stays local-first: `CMSG_SET_SELECTION` queues and lands on resume.
+- Item moves and action-bar edits need a decision at build time. They'd queue, so an icon could
+  stay locked until resume; M4 refuses them until proven safe.
+
+**F6 while paused works, by construction.**
+- The swap runs on the World messager, before the sessions update and outside the map update,
+  which is the part that stops. That is where it has always run, so a frozen map changes nothing
+  for it.
+- `.party swap` arrives on the async chat thread. Nothing it needs is on a map queue.
+- The burst, `ExistingPlayerLogin` and `SMSG_PARTY_SWAP` are sent directly.
+- Three things wait until resume, and all are safe:
+  - **The mover claim** (`CMSG_SET_ACTIVE_MOVER`) is on the movement queue. It runs first on resume,
+    ahead of any later movement, in wire order.
+  - **Name queries** are on the map queue. The warm-up has already filled the cache.
+  - **Dirty field updates** go out at the next map update.
+- The old character's new `PartyBotAI` doesn't update until resume, so it stands still, as it
+  should.
+- **Client:** with no clock moving, the UI's cooldowns and auras must seed from the frozen clock,
+  which the `Instant` plan gives. The camera glide stays on real time.
+- **Check first:** the swap's `StopMoving` on the new character while it's mid-spline. Its stop
+  packet should land it where the paused sample already shows it.
+
+**RTS camera (M5).** A second key, usable paused or unpaused. Pausing alone leaves the camera where
+it is. Unpaused the world runs on, and the character stands still while the camera has the
+movement keys.
+- **Keys:** the design's earlier "P" is the spellbook in 1.12. Pause is a rebindable binding,
+  default F7. F8 toggles the RTS view, and F6 stays the swap.
+- **Port from `td-game/camera.rs`:** the boom over a ground focus, pan, turn and zoom, terrain
+  riding, and `ControlMode`'s blend of position, rotation and field of view (0.7 s, eased), with
+  input ignored mid-blend. The arena clamp becomes a radius around the party's centroid.
+- **All of it on `Time<Real>`.**
+- **E3, the yield:**
+  - `CameraYield` tells `control` not to write the camera; everything else in `control` stays.
+  - It saves the third-person pose for the way back, which ends on the *active* character, so a
+    swap made while in RTS view blends to the new one.
+  - The crate's system runs after `control`, the slot `swap_blend` already uses. The glide stands
+    aside while yielded.
+- **Input:** the crate reads raw keys and mouse, and stands aside while the UI has keyboard capture
+  or the pointer is over a frame.
+- **Streaming:** the stream focus follows the player. A radius of about 100 yd keeps the view inside
+  what's loaded; following the camera with the `ViewSubject` far-sight path is the fallback if
+  that shows holes.
+- **Picking:** the existing click-to-target works on the frozen world, and a click on a party member
+  selects it, so M6 has a selection to act on. Double-click swaps.
+
+**Room for M6 orders.**
+- Orders travel like the swap: `.party order <member> <verb> …` on the async thread, queued on the
+  World messager, stored on that member's `PartyBotAI`. Storing them needs no map update, so they
+  work while paused and the AI acts on them from the first tick after resume.
+- An order lives with the AI, so the swap must carry it: the fresh AI built for the old character
+  takes it, as it already takes the CC and focus marks.
+- Queued orders are a client-side list too, drawn over the frozen world, so `SMSG_PARTY_PAUSE` needs
+  no change.
+
+**The picture while paused: measured, one place.** The spike (2026-11-01, Northshire, 640x360, play
+build, `PARTY_PICTURE_SPIKE`) paused the server and `Time<Virtual>`, flew the world camera 100 yd,
+then flew the same line unpaused as the control.
+
+- **Nothing failed to appear.** The paused and control views from the far end differ by more than
+  16 levels in 18 of 230,400 pixels, all in the party frames at the left of the screen.
+- **Streaming runs while paused.** Meshes kept arriving along the paused flight (13–36 a second),
+  matching the control's 13–28. The doodad distance fade and the mesh counts follow the camera
+  alone. The paused flight held 60 fps, as the control did.
+- **Not settled by that run: `RenderFade`.** No fade was live during the pause, so the frozen ramp
+  was never seen. From the code, `apply_render_fade` reads `Res<Time>`, so a fade in flight holds
+  its alpha, and a unit created while paused would stay at alpha 0 until resume. Only the swap's
+  burst can create one, so step 5 must check it. The reference runs this ramp on the wall clock
+  (`FadeTo`), so the likely fix is to move the ramp to `Time<Real>`.
+- **What the run doesn't cover:** interiors, particles, a camera that leaves the terrain loaded
+  around the body, and the remote splines, which are still on `Instant` until step 3.
+
+**Second risk, low and mechanical:** a raw `time(nullptr)` deadline missed on the server would tick
+through a pause and expire early, not break anything. Step 1 moved 87 lines, including the
+scripts' `boss_omen` and `ungoro_crater`. Left on wall time: mail, auctions, instance resets, game
+events, bans, logout, trade, mute and character create and login times.
+
 ### Engine changes this needs (to be approved before each is made)
 
 The crate reaches benilla-app through `run_with`, `Objects` and `Interact` only, and every other
@@ -373,16 +555,16 @@ are fork changes.
 | E0 | **Done (M0).** `benilla_app::AutoLogin { user, pass, character }`: a silent login and the character to enter, sent when the crate chooses (`glue_session/login.rs`, `roster.rs`) | M0 |
 | E1 | **The identity swap.** `SMSG_PARTY_SWAP {old, new}` in benilla-protocol, and its handling in benilla-app: move `SelfGuid`, `SelfPlayer`, `Embodied`/`ActiveMover` and `MoverClaim` to the new guid; reset the per-character caches without touching the world; reload the UI in place under the new character | M1 |
 | E1b | **Done (relog M1, kept).** `benilla_app::SessionRequest::{Command, Target, Relog, CreateCharacter}` (`glue_session/requests.rs`): server commands for the bots, and character creation for party setup | M1 |
-| E2 | A pausable world clock: route spline sampling, extrapolation, animation, particles, `GetTime`, aura and cooldown clocks and the sky through it, freeze controller output, and make `frame_pace` aware of it | M4 |
-| E3 | A camera-yield hook: an external mode takes the camera transform and input. The app's camera saves its view and stops reading input. | M5 |
+| E2 | A pausable world clock (§2.2): `SMSG_PARTY_PAUSE`, `benilla_world::world_clock`, a `FrameStep` split into real and world steps, `GetTime` and `UiClock` on the world step, `Time<Virtual>::pause()`, the "not driving" gate, and one refusal point for commands | M4 |
+| E3 | A camera-yield hook (§2.2): `CameraYield` stops `control` writing the camera, keeps the third-person pose for the way back, and exposes the world camera to a crate system after `control` | M5 |
 | E4 | Public read access to the party roster and member guids (`ui_party`) and to `SelfGuid` | M2, M6 |
-| E5 | A hook for chat replies: let the crate see system-message lines so it can read server command replies | M2, M4 |
+| E5 | A hook for chat replies: let the crate see system-message lines so it can read server command replies. M4 doesn't need it: pause replies with an opcode. | M2 |
 
 Server-side work goes in a vmangos fork kept beside this repo:
 
 - The session swap (§2.1): a `.party swap <name>` command queued to the world thread, and
   `SMSG_PARTY_SWAP`.
-- `.pause`.
+- Pause (§2.2): the frozen clock, `.party pause on|off` and `SMSG_PARTY_PAUSE`.
 - Bot orders.
 
 ---
@@ -883,27 +1065,66 @@ and the pieces listed below).
   - `WOW_PROBE_LUA_EACH_VM=1`: re-runs the Lua probe on each change of character too.
   - `ui: party rebind fired` and the `pty` trace tag time the rebind.
 
-**M4 — Pause.**
+**M4 — Pause** (§2.2). In order, each a small piece with its own probe:
 
-- Server `.pause on|off`, with the deadline shift on resume.
-- Client E2: a P key, a "Paused" overlay, and frozen input.
-- **Accept when** probes show, across a 10 s pause:
-  - spline positions unchanged;
-  - animation times frozen;
-  - a cast bar and a cooldown sweep resume from where they stopped;
-  - aura remaining times unchanged;
-  - no `MSG_MOVE_*` sent.
+1. **Server freeze (fork).** Done, fork commits `ba7ba6486` and `a7a4b719b`.
+   - The pause clock is in `WorldTimer`: `getMSTime`, `getClockTime` and `getGameTime`. `World` and
+     `Map` both take their clocks from it; `Map` kept its own `m_currentTime`, which §2.2's table
+     missed. `World::Update` zeroes `diff` after the messager, so the tick that pauses reaches no
+     map.
+   - **Checked** (one run, `PARTY_PAUSE_TEST=1`, `crates/party/src/server/party/pause_test.rs`,
+     `logs/pause-checks.txt`, 0 failed):
+     - Over a 10 s pause, 5 samples: world clock, game time, aura, cooldown, respawn, a nearby
+       creature and every member's position held, with a bot caught mid-run.
+     - After resume, 1047 ms in, the aura had spent 1065 ms and the cooldown 1044 ms, and the bot
+       ran on.
+     - Armed for 20 s and paused for 10.3 s, so expected at 30.3 s: the aura and cooldown finished
+       at 30.4 s, the respawn at 29.6 s.
+     - A pause with the client's socket closed lifted itself.
+   - Not tested: a refused pause (teleport, flight), and a real combat tick across a pause, as
+     unattended combat probes are ruled out.
+2. **Picture spike.** Done, §2.2: nothing failed to appear. `RenderFade` is still open.
+3. **World clock.** `world_clock`, the `FrameStep` split, `GetTime` and `UiClock`, then one subsystem
+   per commit: splines and remote motion, casts, cooldowns, auras, transports, weather and material
+   animation, the sky. Then the source-scanning test.
+4. **Input and state.** `SMSG_PARTY_PAUSE` in benilla-protocol, the "not driving" gate, the command
+   refusal point, a rebindable pause binding (default F7) and a "Paused" overlay.
+5. **F6 while paused.** Swap around the party during a pause, and confirm the mover claim lands on
+   resume and that a unit the burst creates isn't left at alpha 0 (§2.2).
 
-**M5 — RTS camera in pause.** Port `camera.rs` and the mode blend, and add E3. Pausing blends into
-the RTS view, and unpausing blends back to the active character. While paused you can click party
-members to select them and double-click to switch.
+**Accept when**, across a 10 s pause, in and out of combat, with numeric probes on both sides:
+- **Server:** aura remaining, cooldown remaining, a cast's remaining time, a creature's respawn time
+  and every unit's position are unchanged; a bot neither moves nor acts.
+- **Client:** spline positions, animation times and the game clock are unchanged; a cast bar and a
+  cooldown sweep resume from where they stopped; no `MSG_MOVE_*` is sent.
+- **The UI works:** bags, the map and chat open and respond while paused.
+- **F6 works while paused**, and the new character moves on resume.
+- **Resume:** nothing jumps. The first frames after resume show no position snap and no burst of
+  ticks; the server log is clean.
+
+**M5 — RTS camera in pause** (§2.2).
+
+1. **E3:** `CameraYield` and the saved third-person pose.
+2. **Port** `camera.rs` and the `ControlMode` blend into `crates/party`, on `Time<Real>`, with the
+   party-centred radius. F8 toggles it, paused or unpaused; a pause or resume doesn't change the
+   view.
+3. **Input arbitration:** chat capture and UI hover stand the camera aside.
+4. **Click and double-click** on party members: select and swap.
+
+**Accept when:**
+- Pan, zoom and turn run smoothly over a frozen world and a running one, on `Time<Real>`.
+- The blend out and back is smooth, and ends on the active character, including after a swap made
+  in RTS view.
+- Everything within the radius is drawn: no missing or half-faded objects.
+- With the camera in the RTS view, the character doesn't move: no `MSG_MOVE_*` sent.
 
 **M6 — Party orders.**
 
 - td-game's behaviours become server bot orders: Hold here, Guard an area, Escort a member,
   Attack a target, Move to a point.
 - The order panel and the anchor and escort picks come from td-game's `hud.rs` and `units.rs`.
-- Orders given while paused are queued and run on resume.
+- Orders given while paused are stored on each member's `PartyBotAI` and run from the first tick
+  after resume (§2.2). The swap carries them across to the fresh AI.
 
 **M7 — Polish.**
 
@@ -914,14 +1135,10 @@ members to select them and double-click to switch.
 
 ## 4. Risks and open questions
 
-- **What vmangos bots support** is unverified until M1. The vmangos source is not on this machine
-  yet. If named characters can't be loaded as bots, M2 needs a server patch first.
-- **Pausing the server** is new. Any system that uses absolute time and that we miss will tick
-  through a pause: mail, auctions, battleground queues, instance resets. Scope the pause to map
-  updates and list what is excluded.
+- **Pausing the server** is new. A raw `time(nullptr)` gameplay deadline that is missed will tick
+  through a pause. Mail, auctions, battleground queues and instance resets stay on wall time by
+  choice (§2.2).
 - **E2 touches hundreds of clock sites.** Do it as a series of small changes, one subsystem at a
-  time, each with a numeric probe.
-- **Saved variables per character.** A relog-based switch writes them as a real logout would,
-  which is correct. A seamless switch (M3) must still flush them.
+  time, each with a numeric probe. The riskiest part is the picture while paused (§2.2).
 - **Upstream divergence.** Every E-change makes this branch harder to rebase on `main`. Keep them
   small and isolated.
