@@ -6,7 +6,6 @@
 //! `Map.dbc` and the map the world stands on (`0x48a750`, `0x495c90`), each as the handlers left
 //! it.
 
-
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 

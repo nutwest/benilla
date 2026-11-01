@@ -3,7 +3,6 @@
 //! and the positions as the handlers left them, each answer derived as the reference's getter
 //! derives it at the call (`0x4ab4a0`, `0x4ab0b0`, `0x4ab9d0`, `0x4abf90`).
 
-
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
