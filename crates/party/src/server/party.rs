@@ -38,6 +38,8 @@ const HUMAN: u8 = 1;
 
 /// How long a server-side step may take before the controller gives up.
 const STEP_LIMIT: Duration = Duration::from_secs(30);
+/// How long a played swap may take: a refused one holds the key until this.
+const SWAP_LIMIT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 struct Member {
@@ -130,6 +132,7 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
         }
         record_played(layout, members[active].name);
     }
+    *sup.party.lock().unwrap() = members.iter().map(|m| (m.guid, m.name)).collect();
     loop {
         let next = (active + 1) % members.len();
         *sup.next_swap.lock().unwrap() = Some(members[next].name.to_string());
@@ -142,7 +145,13 @@ pub fn run(sup: &Supervisor, layout: &Layout, db: &Db, secrets: &Secrets) -> any
             }
             std::thread::sleep(Duration::from_millis(5));
         };
-        match see_through(sup, layout, &members, active, next, pressed, STEP_LIMIT) {
+        // The key's swap goes to the next member, the RTS camera's to the one it picked.
+        let picked = sup.next_swap.lock().unwrap().clone();
+        let next = members
+            .iter()
+            .position(|m| Some(m.name) == picked.as_deref())
+            .unwrap_or(next);
+        match see_through(sup, layout, &members, active, next, pressed, SWAP_LIMIT) {
             Ok(_) => active = next,
             Err(err) => warn!("party: swap failed: {err:#}"),
         }

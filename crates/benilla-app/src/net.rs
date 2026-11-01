@@ -51,10 +51,10 @@ pub(crate) use game_time::GameTime;
 pub(crate) use game_time::{clock_tick, GameTimeLive, ServerTime};
 pub(crate) use handlers::NetHandlerApp;
 pub(crate) use party_pause::{
-    binding_row as pause_binding_row, default_binding as pause_default_binding,
+    binding_rows as pause_binding_rows, default_bindings as pause_default_bindings,
     note_press as note_binding_press,
 };
-pub use party_pause::{enable_world_pause, world_paused};
+pub use party_pause::{enable_world_pause, take_camera_toggle, world_paused};
 pub use party_swap::mid_air;
 pub(crate) use party_swap::note_mid_air;
 

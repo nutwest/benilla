@@ -123,6 +123,25 @@ pub(crate) struct UiCostWanted(pub(crate) bool);
 #[derive(Resource, Default)]
 pub(crate) struct PlayerUiHover(pub(crate) Option<u32>);
 
+/// Whether the interface holds the input this frame, for a consumer reading raw keys and mouse.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct UiFocus<'w> {
+    capture: Option<Res<'w, UiKeyboardCapture>>,
+    hover: Option<Res<'w, PlayerUiHover>>,
+}
+
+impl UiFocus<'_> {
+    /// A focused EditBox takes the keys.
+    pub fn typing(&self) -> bool {
+        self.capture.as_ref().is_some_and(|c| c.typing)
+    }
+
+    /// A frame is under the cursor.
+    pub fn hovering(&self) -> bool {
+        self.hover.as_ref().is_some_and(|h| h.0.is_some())
+    }
+}
+
 /// Who owns this frame's keys (the client's `DAT_00cf4dc8 != 0` gate), written in [`UiInput`] and
 /// read after it: a focused EditBox takes every key, a shown keyboard-enabled frame only the key
 /// it ate. Neither releases a held key: only the window deactivate (`0x514490`, from `0x493058`)

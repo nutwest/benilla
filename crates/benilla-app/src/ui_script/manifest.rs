@@ -206,8 +206,8 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
     match benilla_ui::bindings_xml::parse(&benilla_ui::source::decode(&bytes)) {
         Ok(bindings) => {
             script.register_bindings(&bindings);
-            if let Some((row, labels)) = crate::net::pause_binding_row() {
-                script.register_bindings(&[row]);
+            if let Some((rows, labels)) = crate::net::pause_binding_rows() {
+                script.register_bindings(&rows);
                 let globals = script.lua().globals();
                 for (name, label) in labels {
                     if let Err(e) = globals.set(name, label) {
@@ -239,7 +239,7 @@ pub(crate) fn default_bindings() -> Vec<benilla_ui::script::keybind::KeyBinding>
         Some(bytes) => {
             let mut pairs =
                 benilla_ui::script::keybind::parse_bindings_wtf(&String::from_utf8_lossy(&bytes));
-            pairs.extend(crate::net::pause_default_binding());
+            pairs.extend(crate::net::pause_default_bindings());
             pairs
         }
         None => {

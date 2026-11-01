@@ -124,6 +124,8 @@ use state::{
     TURN_RATE_MOVING, WALK_RATIO, WATER_WALK_PITCH_FLOOR, WEDGE_MIN_FALL, WEDGE_STALL_RATIO,
     WEDGE_STILL_FRAMES,
 };
+pub(crate) use swap_blend::camera_yielded;
+pub use swap_blend::{yield_camera, CameraPlaced};
 /// The swim boundary `0.75·h`, also the wade ceiling, for the creature swim marker and the
 /// footstep splash, which have no `Player`.
 pub(crate) use swim::{may_swim, swim_enter_depth};
@@ -385,6 +387,7 @@ impl Plugin for PlayerPlugin {
             swap_blend::apply_swap_blend
                 .after(control)
                 .before(crate::camera_shake::apply_camera_shake)
+                .in_set(CameraPlaced)
                 .in_set(WorldStage::Input)
                 .in_set(crate::client_state::InWorldGated),
         )

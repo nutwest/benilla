@@ -545,6 +545,9 @@ fn wheel_chord(mods: Mods, up: bool) -> Option<Chord> {
 /// Whether the world frame's wheel slot takes a notch: it runs the notch's chord and answers the
 /// sum of the two `ExecuteBinding` results (`0x483d87`), which is 0 for a chord with no binding.
 pub(crate) fn world_takes_wheel(dispatch: Option<&BindingDispatch>, mods: Mods, up: bool) -> bool {
+    if crate::player::camera_yielded() {
+        return false;
+    }
     match (dispatch, wheel_chord(mods, up)) {
         (Some(dispatch), Some(chord)) => dispatch.resolve(chord, false).is_some(),
         (None, _) => true,
@@ -720,6 +723,21 @@ fn dev_plane(mods: Mods) -> bool {
 /// `0x514490`, which does clear them, is the OS window-deactivate handler (sole caller
 /// `0x493058`, off the root's WM_ACTIVATE slot `[root+0x1134]`); here bevy's `KeyboardFocusLost`
 /// and `ButtonInput::release_all` reach the stuck-latch sweep.
+/// The keys a consumer holding the camera pans and turns it with
+/// ([`crate::player::yield_camera`]).
+const CAMERA_KEYS: [KeyCode; 10] = [
+    KeyCode::KeyW,
+    KeyCode::KeyA,
+    KeyCode::KeyS,
+    KeyCode::KeyD,
+    KeyCode::KeyQ,
+    KeyCode::KeyE,
+    KeyCode::ArrowUp,
+    KeyCode::ArrowDown,
+    KeyCode::ArrowLeft,
+    KeyCode::ArrowRight,
+];
+
 fn key_leg(
     dispatch: &BindingDispatch,
     state: &mut BindingLatches,
@@ -739,6 +757,10 @@ fn key_leg(
     let key = chord::normalize_key(ev.key_code);
     match ev.state {
         ButtonState::Pressed => {
+            // A consumer holding the camera reads these itself.
+            if crate::player::camera_yielded() && CAMERA_KEYS.contains(&ev.key_code) {
+                return;
+            }
             // A focused box in alt-arrow mode declines the four arrows, so their bindings fire
             // while typing (`UiKeyboardCapture::arrows_fall_through`).
             let arrow_exempt = verdict.arrows_fall_through
@@ -843,6 +865,9 @@ fn button_leg(
     }
     match pressed {
         ButtonState::Pressed => {
+            if button == MouseButton::Right && crate::player::camera_yielded() {
+                return;
+            }
             if mods.sup || over_ui || state.latched.iter().any(|(k, _)| *k == Held::Mouse(button)) {
                 return;
             }

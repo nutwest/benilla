@@ -196,6 +196,7 @@ pub(super) fn sample_look(
     let mut opts_shadow = cursor_opts.bypass_change_detection().clone();
     // The facing before the look session, restored below when the mouse may not turn the body.
     let yaw_before_look = player.face_yaw;
+    let view_before_look = (cam.yaw, cam.pitch);
     // A loading cover cancels a gesture in flight: its release must not click the world we just
     // left.
     if gates.4.covering() {
@@ -222,7 +223,12 @@ pub(super) fn sample_look(
     // restoring is the same downstream. Standing up hands the camera's yaw back at the next
     // motion sample, a snap, as `0x5103e0` commits the camera's facing rather than a delta.
     let paused = benilla_world::world_clock::is_paused();
-    if !mouse_turns_body || lock.control_lost || lock.reseat || paused {
+    // On loan the look session turns nothing: the third-person view waits as it was.
+    let yielded = super::camera_yielded();
+    if yielded {
+        (cam.yaw, cam.pitch) = view_before_look;
+    }
+    if !mouse_turns_body || lock.control_lost || lock.reseat || paused || yielded {
         player.face_yaw = yaw_before_look;
     }
     // The hand-off runs on each motion and on the press that completes both mouse bits, motion or
@@ -232,7 +238,8 @@ pub(super) fn sample_look(
             && mouse_turns_body
             && !lock.control_lost
             && !lock.reseat
-            && !paused,
+            && !paused
+            && !yielded,
         facing: yaw_before_look,
     };
     {
@@ -443,7 +450,8 @@ pub(super) fn control(
         && mover.mouse_may_turn_body(stunned, stand_state)
         && !world_q.6.control_lost
         && !world_q.6.reseat
-        && !paused;
+        && !paused
+        && !super::camera_yielded();
     if late_hand_off {
         player.face_yaw = cam.yaw;
     }

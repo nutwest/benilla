@@ -5,8 +5,30 @@
 //! body is offset back toward the old one by the gap between the two bodies, eased out to none,
 //! so the orbit, its collision and the player's input stay the controller's.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use benilla_world::view::WorldCamera;
 use bevy::prelude::*;
+
+/// Runs after what places the world camera each frame; a consumer that takes the camera over
+/// ([`yield_camera`]) orders after it and reads the third-person pose off the `Transform`.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CameraPlaced;
+
+static YIELDED: AtomicBool = AtomicBool::new(false);
+
+/// Deviation: 1.12's camera always follows its unit. While yielded a consumer owns the world
+/// camera and the keys and mouse it reads: `control` still places the third-person pose, which the
+/// consumer overwrites, the mouse turns no body, and the bindings of the movement keys, the right
+/// button and the wheel don't run.
+pub fn yield_camera(yielded: bool) {
+    YIELDED.store(yielded, Ordering::Relaxed);
+}
+
+/// Whether a consumer holds the camera.
+pub(crate) fn camera_yielded() -> bool {
+    YIELDED.load(Ordering::Relaxed)
+}
 
 /// How long the glide takes.
 pub(crate) const BLEND_SECS: f32 = 0.25;
@@ -42,6 +64,11 @@ pub(super) fn apply_swap_blend(
     let Some((gap, start)) = blend.0 else {
         return;
     };
+    // A camera on loan has nothing to glide: the consumer blends back to the new character.
+    if camera_yielded() {
+        blend.0 = None;
+        return;
+    }
     let elapsed = time.elapsed_secs() - start;
     if elapsed >= BLEND_SECS {
         blend.0 = None;

@@ -17,19 +17,25 @@ use bevy::prelude::*;
 use super::{NetHandlerApp, NetStatus, SelfGuid};
 use crate::glue_session::requests::SessionRequest;
 
-/// The command, its section and their window labels.
+/// The commands, their section and their window labels.
 const COMMAND: &str = "WORLDPAUSE";
+const CAMERA_COMMAND: &str = "PARTYCAMERA";
 const HEADER: &str = "PARTY";
 const COMMAND_LABEL: &str = "Pause the world";
+const CAMERA_LABEL: &str = "Toggle the party camera";
 const HEADER_LABEL: &str = "Party";
-/// The command's key until the player rebinds it.
+/// The commands' keys until the player rebinds them.
 const DEFAULT_KEY: &str = "F7";
+const CAMERA_KEY: &str = "F8";
 
 static OFFERED: AtomicBool = AtomicBool::new(false);
-/// The command's press, for the next [`ask_on_key`].
+/// The pause command's press, for the next [`ask_on_key`].
 static PRESSED: AtomicBool = AtomicBool::new(false);
+/// The camera command's press, for [`take_camera_toggle`].
+static CAMERA_PRESSED: AtomicBool = AtomicBool::new(false);
 
-/// Offers the world pause: a Key Bindings row, default F7, that asks the fork's `.party pause`.
+/// Offers the world pause: a Key Bindings row, default F7, that asks the fork's `.party pause`,
+/// and the party camera's row, default F8, which [`take_camera_toggle`] hands to the consumer.
 /// Call it before the app runs, on a server that has the command.
 pub fn enable_world_pause() {
     OFFERED.store(true, Ordering::Relaxed);
@@ -40,38 +46,50 @@ pub fn world_paused() -> bool {
     world_clock::is_paused()
 }
 
-/// The command's row of the key table's defaults, when offered.
-pub(crate) fn default_binding() -> Option<benilla_ui::script::keybind::KeyBinding> {
-    OFFERED
-        .load(Ordering::Relaxed)
-        .then(|| (DEFAULT_KEY.to_string(), COMMAND.to_string()))
+/// Whether the party camera's key went down since the last call.
+pub fn take_camera_toggle() -> bool {
+    CAMERA_PRESSED.swap(false, Ordering::Relaxed)
 }
 
-/// The command's row beside the core's, when offered, and the `BINDING_*` globals that label it in
-/// the Key Bindings window. Its body is empty: 1.12 has no Lua call for this, and adding one would
-/// show it to addons, so [`note_press`] takes the command by name.
-pub(crate) fn binding_row() -> Option<(Binding, [(String, &'static str); 2])> {
+/// The commands' rows of the key table's defaults, when offered.
+pub(crate) fn default_bindings() -> Vec<benilla_ui::script::keybind::KeyBinding> {
+    if !OFFERED.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    [(DEFAULT_KEY, COMMAND), (CAMERA_KEY, CAMERA_COMMAND)]
+        .map(|(key, command)| (key.to_string(), command.to_string()))
+        .into()
+}
+
+/// The commands' rows beside the core's, when offered, and the `BINDING_*` globals that label them
+/// in the Key Bindings window. Their bodies are empty: 1.12 has no Lua call for these, and adding
+/// one would show it to addons, so [`note_press`] takes the commands by name.
+pub(crate) fn binding_rows() -> Option<(Vec<Binding>, Vec<(String, &'static str)>)> {
     OFFERED.load(Ordering::Relaxed).then(|| {
-        let row = Binding {
-            name: COMMAND.to_string(),
-            header: Some(HEADER.to_string()),
+        let row = |name: &str, header: Option<&str>| Binding {
+            name: name.to_string(),
+            header: header.map(str::to_string),
             run_on_up: false,
             hidden: false,
             platform: None,
             body: String::new(),
         };
-        let labels = [
+        let rows = vec![row(COMMAND, Some(HEADER)), row(CAMERA_COMMAND, None)];
+        let labels = vec![
             (format!("BINDING_NAME_{COMMAND}"), COMMAND_LABEL),
+            (format!("BINDING_NAME_{CAMERA_COMMAND}"), CAMERA_LABEL),
             (format!("BINDING_HEADER_{HEADER}"), HEADER_LABEL),
         ];
-        (row, labels)
+        (rows, labels)
     })
 }
 
-/// The binding dispatch's press of `command`: ours is noted for [`ask_on_key`].
+/// The binding dispatch's press of `command`: ours are noted for their readers.
 pub(crate) fn note_press(command: &str) {
-    if command == COMMAND {
-        PRESSED.store(true, Ordering::Relaxed);
+    match command {
+        COMMAND => PRESSED.store(true, Ordering::Relaxed),
+        CAMERA_COMMAND => CAMERA_PRESSED.store(true, Ordering::Relaxed),
+        _ => {}
     }
 }
 

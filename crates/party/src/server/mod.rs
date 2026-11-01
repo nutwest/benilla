@@ -14,6 +14,7 @@ mod fetch;
 mod layout;
 mod party;
 mod procs;
+mod rts;
 mod setup;
 
 use layout::Layout;
@@ -96,6 +97,8 @@ pub struct Supervisor {
     walk: Mutex<Option<Duration>>,
     /// The jump key's press, for the checks.
     jump: AtomicBool,
+    /// The party's members, guid and name, once it is in the world.
+    party: Mutex<Vec<(u64, &'static str)>>,
     /// The units the client streams, sampled by the app.
     units: Mutex<Vec<UnitSnap>>,
 }
@@ -120,6 +123,7 @@ impl Supervisor {
             self_guid: AtomicU64::new(0),
             walk: Mutex::default(),
             jump: AtomicBool::new(false),
+            party: Mutex::default(),
             units: Mutex::default(),
         }
     }
@@ -234,7 +238,8 @@ impl Plugin for ServerPlugin {
         app.insert_resource(Server(Arc::clone(&self.0)))
             .add_systems(Startup, start)
             .add_systems(Update, (bridge, sample_units, report_in_world))
-            .add_systems(First, walk);
+            .add_systems(First, walk)
+            .add_plugins(rts::RtsPlugin);
     }
 }
 
@@ -300,6 +305,17 @@ fn bridge(
 }
 
 impl Supervisor {
+    /// The guid of the character the client plays, 0 out of the world.
+    fn self_guid(&self) -> u64 {
+        self.self_guid.load(Ordering::Relaxed)
+    }
+
+    /// Swaps to the member `name`, as the switch key does to the next one.
+    fn swap_to(&self, name: &str) {
+        *self.next_swap.lock().unwrap() = Some(name.to_string());
+        self.press_switch();
+    }
+
     /// Presses the switch key from the checks: the next frame takes it as the key.
     fn press_switch(&self) {
         self.virtual_key.store(true, Ordering::Relaxed);

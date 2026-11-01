@@ -209,13 +209,17 @@ pub use benilla_world::worldview::run as run_worldview;
 pub use bevy::app::AppExit;
 // A crate on top of benilla reads objects and interacts through these, with no protocol dependency.
 pub use benilla_protocol::{messages::ObjectType, ObjectFields};
+pub use benilla_world::view::WorldCamera;
+pub use benilla_world::world_point::TerrainHeights;
 /// A crate on top logs in without the login screen ([`run_with`]).
 pub use glue_session::login::AutoLogin;
 /// A crate on top asks the session for a server command, a relog or a new character.
 pub use glue_session::requests::SessionRequest;
 pub use local_state::share_character_state;
-pub use net::{enable_world_pause, mid_air, world_paused, Objects};
+pub use net::{enable_world_pause, mid_air, take_camera_toggle, world_paused, Objects};
+pub use player::{yield_camera, CameraPlaced};
 pub use target::Interact;
+pub use ui_script::UiFocus;
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

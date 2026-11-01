@@ -539,22 +539,25 @@ movement keys.
 - **Keys:** the design's earlier "P" is the spellbook in 1.12. Pause is a rebindable binding,
   default F7. F8 toggles the RTS view, and F6 stays the swap.
 - **Port from `td-game/camera.rs`:** the boom over a ground focus, pan, turn and zoom, terrain
-  riding, and `ControlMode`'s blend of position, rotation and field of view (0.7 s, eased), with
-  input ignored mid-blend. The arena clamp becomes a radius around the party's centroid.
+  riding, and the blend of position and rotation (0.7 s, eased), with input ignored mid-blend. The
+  mode system shrinks to on and off, and the arena clamp becomes 100 yd around the party's centre.
+  The code is `crates/party/src/server/rts.rs`.
 - **All of it on `Time<Real>`.**
-- **E3, the yield:**
-  - `CameraYield` tells `control` not to write the camera; everything else in `control` stays.
-  - It saves the third-person pose for the way back, which ends on the *active* character, so a
-    swap made while in RTS view blends to the new one.
-  - The crate's system runs after `control`, the slot `swap_blend` already uses. The glide stands
-    aside while yielded.
-- **Input:** the crate reads raw keys and mouse, and stands aside while the UI has keyboard capture
-  or the pointer is over a frame.
-- **Streaming:** the stream focus follows the player. A radius of about 100 yd keeps the view inside
-  what's loaded; following the camera with the `ViewSubject` far-sight path is the fallback if
+- **E3, the yield:** simpler than planned. `control` keeps placing the third-person camera every
+  frame, and the crate overwrites it after `benilla_app::CameraPlaced`, so the pose to blend back
+  to is always live and ends on the *active* character, even after a swap made in the RTS view.
+  `yield_camera` tells the app the camera is on loan: the mouse turns no body and leaves the
+  third-person view where it was, and the swap's glide stands aside.
+- **Input:** the crate reads raw keys and mouse. While yielded the bindings of WASD, Q, E, the
+  arrows, the right button and the wheel don't run, so the character stands still whatever it was
+  doing, and a key held at the toggle stays held until its release. `UiFocus` stands the camera
+  aside: typing stops the keys, and a frame under the cursor stops the wheel, new drags and clicks.
+- **Streaming:** the stream focus still follows the player, and the radius keeps the view inside
+  what's loaded. Following the camera with the `ViewSubject` far-sight path is the fallback if
   that shows holes.
-- **Picking:** the existing click-to-target works on the frozen world, and a click on a party member
-  selects it, so M6 has a selection to act on. Double-click swaps.
+- **Picking:** in screen space, within 48 px of a member's middle. A click records the selection
+  for M6, and the world's own click-to-target runs as usual. Two clicks within 0.35 s swap to that
+  member, by the switch key's path.
 
 **Room for M6 orders.**
 - Orders travel like the swap: `.party order <member> <verb> …` on the async thread, queued on the
@@ -1140,8 +1143,12 @@ and the pieces listed below).
      run, six swaps, 30 findings, 0 FAIL, 59–68 ms from the key to playing the new character.
    - **Not run:** the client's pause itself. No live run has pressed the key, so the freeze, the
      gate, the banner and the resume are covered by unit tests alone until the playtest.
-5. **F6 while paused.** Swap around the party during a pause, and confirm the mover claim lands on
-   resume and that a unit the burst creates fades in (§2.2).
+5. **F6 while paused.** No client change was needed, from reading the paths (2026-11-01):
+   - **The new character mid-spline:** the swap's stop and the burst's re-create clear its spline,
+     and `wire_in` adopts the body ahead of the pause's early return. Its server position can be one
+     map tick behind the frozen sample, so it may shift by up to about 0.7 yd. Not run.
+   - **No unit stays invisible:** the fades run on `Time<Real>`, and `ScaleEase`, the one other
+     `Res<Time>` step on a body, runs only on a scale change and holds the scale it has.
    - **Checked** in part (2026-11-01, one run, `PARTY_FALL_TEST=1`,
      `crates/party/src/server/party/fall_test.rs`, `logs/fall-checks.txt`, 10 findings, 0 failed):
      - **Swapped mid-jump, running:** the old body flew on for 622 ms, peaked 1.64 yd up and ended
@@ -1161,14 +1168,10 @@ and the pieces listed below).
 - **Resume:** nothing jumps. The first frames after resume show no position snap and no burst of
   ticks; the server log is clean.
 
-**M5 — RTS camera in pause** (§2.2).
-
-1. **E3:** `CameraYield` and the saved third-person pose.
-2. **Port** `camera.rs` and the `ControlMode` blend into `crates/party`, on `Time<Real>`, with the
-   party-centred radius. F8 toggles it, paused or unpaused; a pause or resume doesn't change the
-   view.
-3. **Input arbitration:** chat capture and UI hover stand the camera aside.
-4. **Click and double-click** on party members: select and swap.
+**M5 — RTS camera** (§2.2). Built 2026-11-01, by the crate's `rts.rs`, the app's `yield_camera`,
+`CameraPlaced` and `UiFocus`, and a `PARTYCAMERA` binding, default F8, under "Party" in the Key
+Bindings window. Covered by the touched modules' tests alone until the playtest, and the crate's
+camera has no automated tests.
 
 **Accept when:**
 - Pan, zoom and turn run smoothly over a frozen world and a running one, on `Time<Real>`.
