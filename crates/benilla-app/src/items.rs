@@ -62,12 +62,13 @@ pub(crate) struct Countdowns {
 /// The setters' store rule (`0x5d9c00`, `0x5d9cc0`): a signed `<= 0` (`jle`) clears the cell, so a
 /// top-bit value is absence, not a 68-year deadline; anything else parks `now + seconds`.
 fn deadline(seconds: u32) -> Option<Instant> {
-    ((seconds as i32) > 0).then(|| Instant::now() + Duration::from_secs(u64::from(seconds)))
+    ((seconds as i32) > 0)
+        .then(|| benilla_world::world_clock::now() + Duration::from_secs(u64::from(seconds)))
 }
 
 /// A cell's time left: `None` when unset, `Some(0)` once elapsed (`0x5d9d00`'s `max(0, …)`).
 fn left(cell: Option<Instant>) -> Option<Duration> {
-    cell.map(|at| at.saturating_duration_since(Instant::now()))
+    cell.map(|at| at.saturating_duration_since(benilla_world::world_clock::now()))
 }
 
 /// The tooltip's read: an elapsed cell is no timer (its `!= 0` gate prints the plain line).
@@ -167,7 +168,7 @@ impl ItemChanges<'_, '_> {
     /// The sum of every item's [`Countdowns`] steps: it moves exactly when a second-floored read
     /// can, and each term only falls between landings, so no change masks another.
     pub(crate) fn countdown_steps(&self) -> u64 {
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         self.countdowns.iter().map(|c| c.steps(now)).sum()
     }
 }
@@ -1194,12 +1195,12 @@ mod tests {
     /// The step count is bounded, not exact: the test cannot pin the sub-second phase.
     #[test]
     fn countdown_steps_move_by_displayable_seconds() {
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut c = Countdowns::default();
         assert_eq!(c.steps(now), 0, "no deadlines, no steps");
 
         assert!(c.set_enchant(1, 90));
-        let steps = c.steps(Instant::now());
+        let steps = c.steps(benilla_world::world_clock::now());
         assert!(
             (90..=91).contains(&steps),
             "a 90 s deadline contributes floor(secs)+1, got {steps}"
@@ -1212,7 +1213,7 @@ mod tests {
         let shown = c.lifetime_remaining_display_ms().expect("parked");
         assert_eq!(shown % 1000, 0);
         assert!(shown <= 1_800_000);
-        let steps = c.steps(Instant::now());
+        let steps = c.steps(benilla_world::world_clock::now());
         assert!(
             (1890..=1892).contains(&steps),
             "both cells step, got {steps}"
@@ -1220,7 +1221,11 @@ mod tests {
 
         assert!(c.set_enchant(1, 0));
         c.set_lifetime(0);
-        assert_eq!(c.steps(Instant::now()), 0, "cleared cells, terms gone");
+        assert_eq!(
+            c.steps(benilla_world::world_clock::now()),
+            0,
+            "cleared cells, terms gone"
+        );
         assert_eq!(c.enchant_remaining_display_ms(1), None);
         assert_eq!(c.lifetime_remaining_ms(), None);
     }

@@ -1110,7 +1110,7 @@ mod tests {
         let mut mods = SpellModifiers::default();
         mods.set_class_family(3);
         mods.set(false, 5, OP_GCD, -50);
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_gcd(133, &d, now, &mods);
         assert_eq!(cds.info(133, 0, Some(&d), now).duration_ms, 750);
@@ -1133,7 +1133,7 @@ mod tests {
         assert_eq!(mods.spell_cooldowns(&d, 0), (6_500, 3_500));
         assert_eq!(mods.spell_cooldowns(&d, 2_000), (6_500, 5_500));
 
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_spell(2136, &d, 2_000, now, Some(&mods));
         assert_eq!(cds.info(2136, 0, Some(&d), now).duration_ms, 6_500);
@@ -1159,7 +1159,7 @@ mod tests {
 
     #[test]
     fn the_gcd_spreads_to_every_spell_sharing_the_start_recovery_category() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_gcd(133, &fireball(), t0, &super::SpellModifiers::default());
 
@@ -1184,7 +1184,7 @@ mod tests {
     /// The SPELL_GO insert (`StartCooldown`, no GCD) is its own node beside the cast-send GCD.
     #[test]
     fn a_go_self_insert_never_wipes_the_running_gcd() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // Frost-Nova-shaped: own 25 s recovery, category 35, the ordinary 133/1500 GCD pair.
         let frost_nova = spell(35, 25_000, 0, (133, 1500), 0);
@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn a_failed_cast_clears_the_gcd_and_the_optimistic_recovery() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let fd = spell(0, 30_000, 0, (133, 1500), 0); // Feign-Death-shaped minus on-event
         cds.start_gcd(5384, &fd, t0, &super::SpellModifiers::default());
@@ -1227,7 +1227,7 @@ mod tests {
 
     #[test]
     fn category_cooldowns_reach_category_siblings_but_not_others() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_spell(100, &charge(), 0, t0, None); // Charge: category 44, 15 s
 
@@ -1246,7 +1246,7 @@ mod tests {
 
     #[test]
     fn an_on_event_cooldown_parks_until_the_event_starts_it() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // Feign Death: 30 s recovery, SPELL_ATTR_COOLDOWN_ON_EVENT (bit 25).
         let fd = spell(0, 30_000, 0, (0, 0), 0x0200_0000);
@@ -1284,7 +1284,7 @@ mod tests {
     /// not the record's recovery and insert time.
     #[test]
     fn a_parked_spell_leg_reads_one_ms_from_now() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_spell(1784, &stealth(), 0, t0, None);
 
@@ -1308,7 +1308,7 @@ mod tests {
     /// start of now.
     #[test]
     fn a_parked_category_leg_reads_its_time_from_now() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // Recovery 0, category 12 for 5 s, parked.
         let parked = spell(12, 0, 5_000, (0, 0), 0x0200_0000);
@@ -1333,7 +1333,7 @@ mod tests {
     /// pass, so the read stays enabled.
     #[test]
     fn a_disabled_read_stays_disabled_whatever_leg_follows() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let plain = |recovery| spell(0, recovery, 0, (0, 0), 0);
         let held = |recovery| spell(0, recovery, 0, (0, 0), 0x0200_0000);
 
@@ -1359,7 +1359,7 @@ mod tests {
     /// the held marker, so it does not move and the feeds see no change.
     #[test]
     fn a_held_triple_is_the_same_whatever_the_query_time() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_spell(1784, &stealth(), 0, t0, None);
         let at = |ms: u64| {
@@ -1380,7 +1380,7 @@ mod tests {
     /// read is not cold and a press is refused.
     #[test]
     fn a_parked_record_with_no_recovery_still_reads() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let form = spell(0, 0, 0, (133, 1_500), 0x0200_0000);
         cds.start_spell(15473, &form, 0, t0, None);
@@ -1402,7 +1402,7 @@ mod tests {
     /// global cooldown runs again from the event.
     #[test]
     fn a_cooldown_event_restarts_the_gcd_from_the_event() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let mods = SpellModifiers::default();
         let form = spell(0, 0, 0, (133, 1_500), 0x0200_0000);
@@ -1431,7 +1431,7 @@ mod tests {
 
     #[test]
     fn wire_cooldowns_take_the_server_duration_or_fall_back_to_the_dbc() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // A school lockout: nonzero wire ms is the recovery verbatim.
         let none = SpellModifiers::default();
@@ -1467,7 +1467,7 @@ mod tests {
                 at,
             );
         };
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
 
         // Login one: 600 s still to run.
@@ -1494,7 +1494,7 @@ mod tests {
     /// `0x6e1690` matches the spell and item pair; only the item gate `0x6e2fc0` passes an entry.
     #[test]
     fn an_on_hold_record_is_findable_only_under_the_key_that_armed_it() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // An on-event on-use spell, category 0 so the category leg cannot answer.
         let use_spell = ItemUseSpell {
@@ -1522,7 +1522,7 @@ mod tests {
 
     #[test]
     fn item_use_cooldowns_key_on_the_item_and_respect_the_wire_triple() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // A potion: category 4 for 60 s; the use cooldown -1 falls back to the spell's (none).
         let use_spell = ItemUseSpell {
@@ -1548,7 +1548,7 @@ mod tests {
     /// a sibling of category 28 and no longer a bare category-4 spell.
     #[test]
     fn an_item_query_uses_the_items_category_override() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let oil_spell = spell(4, 0, 0, (0, 0), 0);
         let oil = ItemUseSpell {
@@ -1586,7 +1586,7 @@ mod tests {
     /// `0x6e8611`), the first go sweeping.
     #[test]
     fn an_insert_sweeps_nothing_and_the_go_sweeps_once_in_two_minutes() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let mut pet = Cooldowns::pet();
         let mods = super::SpellModifiers::default();
@@ -1616,7 +1616,7 @@ mod tests {
     /// so that global cooldown reads no more.
     #[test]
     fn the_sweep_frees_a_running_global_cooldown_and_keeps_running_timers() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let mut pet = Cooldowns::pet();
         let mods = super::SpellModifiers::default();
@@ -1665,7 +1665,7 @@ mod tests {
     /// A fail-clear and re-arm between two feeds must still read as a new start.
     #[test]
     fn the_ui_triple_is_stable_per_arm_and_distinct_across_arms() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default());
 
@@ -1699,7 +1699,7 @@ mod tests {
 
     #[test]
     fn a_mid_frame_arm_derives_the_same_start_as_the_next_frames_pair() {
-        let anchor0 = Instant::now();
+        let anchor0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // Armed 4 ms after this frame's anchor sample.
         cds.start_gcd(
@@ -1734,7 +1734,7 @@ mod tests {
     /// is refused, a `{0, 0}` press is not.
     #[test]
     fn a_running_gcd_locks_presses_by_category_equality_alone() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         assert!(
             !cds.not_ready(133, 0, 0, Some(&fireball()), t0),
@@ -1766,7 +1766,7 @@ mod tests {
     /// The getter's exclusion (`0x6e1439`, `0x6e1442`).
     #[test]
     fn attack_and_tradeskill_reads_are_always_cold() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         cds.start_gcd(772, &fireball(), t0, &super::SpellModifiers::default());
         let mid = t0 + Duration::from_millis(200);
@@ -1782,7 +1782,7 @@ mod tests {
     /// The wildcard leg (`0x6e1563`): wand Shoot's category 351 sweeps every button.
     #[test]
     fn a_wildcard_category_record_reaches_every_query() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         // Shoot: no DBC recovery; the ranged pad is the category duration.
         let shoot = SpellDisplay {
@@ -1811,7 +1811,7 @@ mod tests {
     /// (`0x6e9712`). The session end is no packet: it flushes only when something went.
     #[test]
     fn the_record_handlers_flush_whether_or_not_a_record_matched() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let mut last = cds.generation;
         let mut moved = |cds: &Cooldowns| {
@@ -1838,7 +1838,7 @@ mod tests {
     /// The ranged pad (`0x6e2b60`): Throw (category 76, no DBC recovery) sweeps the weapon speed.
     #[test]
     fn throw_sweeps_the_ranged_attack_time_via_its_category() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let throw = spell(76, 0, 0, (0, 0), 0x410012);
         cds.start_spell(2764, &throw, 2200, t0, None);
@@ -1857,7 +1857,7 @@ mod tests {
     /// Auto Shot's category 0 has no `SpellCategory` row, so its padded timer never surfaces.
     #[test]
     fn auto_shot_category_zero_never_surfaces_its_pad() {
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         let mut cds = Cooldowns::default();
         let auto_shot = spell(0, 0, 0, (0, 0), 0x50012);
         cds.start_spell(75, &auto_shot, 3200, t0, None);

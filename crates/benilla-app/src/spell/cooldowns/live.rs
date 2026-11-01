@@ -42,7 +42,7 @@ impl CooldownLive<'_, '_> {
                         spell,
                         0,
                         catalog.and_then(|c| c.get(spell)),
-                        std::time::Instant::now(),
+                        benilla_world::world_clock::now(),
                     )
                     .ui_triple(anchor, ui_now),
             );
@@ -57,7 +57,7 @@ impl CooldownLive<'_, '_> {
                         spell,
                         0,
                         catalog.and_then(|c| c.get(spell)),
-                        std::time::Instant::now(),
+                        benilla_world::world_clock::now(),
                     )
                     .ui_triple(anchor, ui_now),
             ),
@@ -73,7 +73,13 @@ impl CooldownLive<'_, '_> {
                 let d = catalog.and_then(|c| c.get(u.spell_id));
                 Some(
                     cooldowns
-                        .info_item(u.spell_id, entry, u.category, d, std::time::Instant::now())
+                        .info_item(
+                            u.spell_id,
+                            entry,
+                            u.category,
+                            d,
+                            benilla_world::world_clock::now(),
+                        )
                         .ui_triple(anchor, ui_now),
                 )
             }

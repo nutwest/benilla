@@ -1326,7 +1326,7 @@ mod tests {
                 &items,
                 None,
                 RollCatalogs::NONE,
-                Some((&cooldowns, std::time::Instant::now(), 0.0)),
+                Some((&cooldowns, benilla_world::world_clock::now(), 0.0)),
                 None,
                 &names,
                 Some(&petitions),
@@ -1389,7 +1389,7 @@ mod tests {
                 RollCatalogs::NONE,
                 Some((
                     &crate::spell::Cooldowns::default(),
-                    std::time::Instant::now(),
+                    benilla_world::world_clock::now(),
                     0.0,
                 )),
                 None,
@@ -1449,7 +1449,7 @@ mod tests {
                     &items,
                     None,
                     RollCatalogs::NONE,
-                    Some((&cooldowns, std::time::Instant::now(), 0.0)),
+                    Some((&cooldowns, benilla_world::world_clock::now(), 0.0)),
                     None,
                     &names,
                     Some(&petitions),
@@ -1507,7 +1507,7 @@ mod tests {
                     &items,
                     None,
                     RollCatalogs::NONE,
-                    Some((&cooldowns, std::time::Instant::now(), 0.0)),
+                    Some((&cooldowns, benilla_world::world_clock::now(), 0.0)),
                     None,
                     &names,
                     Some(&petitions),
@@ -1570,7 +1570,7 @@ mod tests {
                     &items,
                     None,
                     rolls,
-                    Some((&cooldowns, std::time::Instant::now(), 0.0)),
+                    Some((&cooldowns, benilla_world::world_clock::now(), 0.0)),
                     None,
                     &names,
                     Some(&petitions),
@@ -1620,7 +1620,7 @@ mod tests {
             t.use_spell = spell;
             items.insert_template(entry, Some(t));
         }
-        let now = std::time::Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut cooldowns = crate::spell::Cooldowns::default();
         // Only 2000 was used; 2001 has a use spell and no cooldown, 2002 has no use spell.
         cooldowns.start_item(2000, &use_spell(9000), None, now);
@@ -1676,7 +1676,7 @@ mod tests {
         ];
         let mut objs = TestObjects::new();
         let mut items = Items::default();
-        let now = std::time::Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut cooldowns = crate::spell::Cooldowns::default();
         for &(guid, entry, template_charges, copy_charges) in &cases {
             objs.spawn(

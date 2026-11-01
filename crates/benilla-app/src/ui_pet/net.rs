@@ -199,7 +199,7 @@ fn pet_spells(
             .collect::<Vec<_>>()
             .join(" · ")
     );
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     // `SetPet` (`0x4bc7e0`) re-arms the expiry on every packet, and a 0 duration clears it.
     bar.expires = (spells.duration_ms != 0)
         .then(|| now + std::time::Duration::from_millis(u64::from(spells.duration_ms)));
@@ -360,7 +360,7 @@ mod tests {
         let mut bar = PetBar::default();
         let mut charm = a_bar(0x2A);
         charm.duration_ms = 60_000;
-        let before = Instant::now();
+        let before = benilla_world::world_clock::now();
         pet_spells(
             charm.clone(),
             None,

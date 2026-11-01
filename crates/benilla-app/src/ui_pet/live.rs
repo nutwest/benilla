@@ -55,7 +55,7 @@ impl PetLive<'_, '_> {
     fn flags(&self, bar: &PetBar) -> PetBarFlagsView {
         let pet = self.unit(bar.spells.pet_guid);
         let me = self.me.as_deref().and_then(|g| g.0);
-        let now = std::time::Instant::now();
+        let now = benilla_world::world_clock::now();
         #[allow(clippy::cast_possible_truncation)] // a tick difference
         let remaining_ms = bar.expires.map(|t| {
             let ms = |d: std::time::Duration| (d.as_secs_f64() * 1000.0).round() as i64;

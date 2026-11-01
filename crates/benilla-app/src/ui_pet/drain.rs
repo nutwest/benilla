@@ -352,7 +352,13 @@ impl PetPress<'_, '_> {
         }
         let signals = latch_press(bar, seam.pet_latch.as_deref_mut(), entry, possessing);
         if let Some(spell) = spell {
-            arm_pet_gcd(bar, entry.action(), spell, spell_mods, Instant::now());
+            arm_pet_gcd(
+                bar,
+                entry.action(),
+                spell,
+                spell_mods,
+                benilla_world::world_clock::now(),
+            );
         }
         debug!(
             "ui_pet: press slot {slot} (action {} kind {:#04x}) at {target_guid:#x}",

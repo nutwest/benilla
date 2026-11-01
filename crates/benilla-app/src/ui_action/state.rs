@@ -348,7 +348,7 @@ impl ActionStates<'_, '_> {
     ) -> UsableSignals {
         let (fresh, activated) = self.walk.all(
             script,
-            Instant::now(),
+            benilla_world::world_clock::now(),
             false,
             self.reactive.as_mut().map(|r| &mut r.0),
         );
@@ -365,7 +365,10 @@ impl ActionStates<'_, '_> {
     /// `RaiseBagUpdate`'s (`0x4f9374`). Every slot's state recomputed and pushed and its pair
     /// stored; whether a pair changed, which signals `ACTIONBAR_UPDATE_USABLE` (`0x4e5c53`).
     pub(crate) fn cache_refresh(&mut self, script: &mut benilla_ui::script::UiScript) -> bool {
-        let fresh = self.walk.all(script, Instant::now(), false, None).0;
+        let fresh = self
+            .walk
+            .all(script, benilla_world::world_clock::now(), false, None)
+            .0;
         let changed = self.memory.cache.refresh(pairs(&fresh));
         push(script, &fresh, &self.memory.cache, None);
         changed
@@ -386,7 +389,13 @@ impl ActionStates<'_, '_> {
         };
         let fresh = self
             .walk
-            .slots_states(script, Some(slot), Instant::now(), false, None)
+            .slots_states(
+                script,
+                Some(slot),
+                benilla_world::world_clock::now(),
+                false,
+                None,
+            )
             .0;
         let pair = fresh
             .get(&action)
@@ -399,7 +408,10 @@ impl ActionStates<'_, '_> {
     /// `0x4e5d60` with no send and quiet set (`0x5deafc`), so its pair is stored, but an empty one
     /// or a spell word the player does not know (`0x60c740`, skipped at `0x5deaf5`).
     pub(crate) fn arrival_slots(&mut self, script: &mut benilla_ui::script::UiScript) {
-        let fresh = self.walk.all(script, Instant::now(), false, None).0;
+        let fresh = self
+            .walk
+            .all(script, benilla_world::world_clock::now(), false, None)
+            .0;
         for (&slot, b) in &self.walk.slots.buttons {
             if b.kind == ACTION_KIND_SPELL && !self.actions.spells.contains(&b.action) {
                 continue;
@@ -555,7 +567,7 @@ impl ActionWalk<'_, '_> {
                 bound.0.insert(id, record.into());
             }
         }
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let walk = Walk {
             bound: &bound,
             counts: &|_| 0,
@@ -870,7 +882,7 @@ pub(super) fn feed_action_state(
     // The cooldown-clock trace's last line (`WOW_MOVE_TRACE` sink, tag "cd").
     mut last_cd_trace: Local<Option<Instant>>,
 ) {
-    let now = Instant::now();
+    let now = benilla_world::world_clock::now();
     let trace_cd = benilla_assets::trace::enabled()
         && last_cd_trace.is_none_or(|t| now.duration_since(t).as_secs_f32() >= 1.0);
     if trace_cd {
