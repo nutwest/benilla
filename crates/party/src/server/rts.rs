@@ -1,8 +1,7 @@
 //! The party's RTS camera, on the binding `PARTYCAMERA` (default F8), paused or not: an eye on a boom
 //! over a ground focus at a fixed pitch. WASD or the arrows pan, Q and E or a right drag turn, the
-//! wheel zooms, and the focus rides the terrain inside [`PARTY_RADIUS`] of the party. A left click
-//! on a party member selects it, and a double click swaps to it; the world's own click still
-//! targets what it hits.
+//! wheel zooms, and the focus rides the terrain inside [`PARTY_RADIUS`] of the party. Picking
+//! members is [`super::selection`]'s.
 //!
 //! The app keeps placing the third-person camera each frame, and this overwrites it after
 //! [`benilla_app::CameraPlaced`], so leaving blends to wherever that view is by then: on the
@@ -35,13 +34,6 @@ const DRAG_TURN: f32 = 0.004;
 const GROUND_EASE: f32 = 8.0;
 /// A toggle's camera blend, in seconds.
 const BLEND_SECS: f32 = 0.7;
-/// How near the cursor must be to a member's middle to pick it, in pixels.
-const PICK_PIXELS: f32 = 48.0;
-/// A member's middle above its feet, in yards.
-const BODY_MIDDLE: f32 = 1.0;
-/// The second click of a double click, within this many seconds.
-const DOUBLE_CLICK_SECS: f32 = 0.35;
-
 /// A camera pose.
 #[derive(Clone, Copy, Debug)]
 struct CamPose {
@@ -67,7 +59,7 @@ impl CamPose {
 
 /// The camera's state.
 #[derive(Resource)]
-struct Rts {
+pub(super) struct Rts {
     on: bool,
     /// The pose a blend started from and when.
     blend: Option<(CamPose, f32)>,
@@ -78,10 +70,18 @@ struct Rts {
     /// The focus has taken a real terrain height, so later heights ease rather than snap.
     grounded: bool,
     dragging: bool,
-    /// The last click on a member and when, for a double click.
-    last_click: Option<(u64, f32)>,
-    /// The member last clicked, which M6's orders will act on.
-    selected: Option<u64>,
+}
+
+impl Rts {
+    /// Whether the camera is on, blending in or settled.
+    pub(super) fn on(&self) -> bool {
+        self.on
+    }
+
+    /// On with no blend running: its input may be read.
+    pub(super) fn settled(&self) -> bool {
+        self.on && self.blend.is_none()
+    }
 }
 
 impl Default for Rts {
@@ -94,8 +94,6 @@ impl Default for Rts {
             distance: DISTANCE_START,
             grounded: false,
             dragging: false,
-            last_click: None,
-            selected: None,
         }
     }
 }
@@ -222,10 +220,10 @@ fn camera(
         Res<AccumulatedMouseMotion>,
     ),
     mut wheel: MessageReader<MouseWheel>,
-    mut window: Query<(&Window, &mut CursorOptions), With<PrimaryWindow>>,
+    mut window: Query<&mut CursorOptions, With<PrimaryWindow>>,
     heights: TerrainHeights,
     focus: UiFocus,
-    mut cameras: Query<(&Camera, &GlobalTransform, &mut Transform), With<WorldCamera>>,
+    mut cameras: Query<&mut Transform, With<WorldCamera>>,
     bodies: Query<&GlobalTransform, Without<WorldCamera>>,
 ) {
     let toggled = benilla_app::take_camera_toggle();
@@ -236,20 +234,17 @@ fn camera(
             rts.on = false;
             rts.blend = None;
             benilla_app::yield_camera(false);
-            release_cursor(rts, window.single_mut().ok().map(|(_, c)| c.into_inner()));
+            release_cursor(rts, window.single_mut().ok().map(|c| c.into_inner()));
         }
         return;
     };
-    let Ok((view, view_global, mut xf)) = cameras.single_mut() else {
+    let Ok(mut xf) = cameras.single_mut() else {
         return;
     };
     let now = time.elapsed_secs();
     // `control` placed this: the third-person pose, on the character played now.
     let third_person = CamPose::of(&xf);
-    let (win, mut cursor) = match window.single_mut() {
-        Ok((win, cursor)) => (Some(win), Some(cursor)),
-        Err(_) => (None, None),
-    };
+    let mut cursor = window.single_mut().ok();
 
     if toggled && rts.blend.is_none() {
         rts.on = !rts.on;
@@ -271,18 +266,17 @@ fn camera(
         return;
     }
 
-    // The party, for the clamp and the picks.
+    // The party, for the clamp.
     let members = server.0.party.lock().unwrap().clone();
-    let placed: Vec<(u64, &'static str, Vec3)> = members
+    let placed: Vec<Vec3> = members
         .iter()
-        .filter_map(|&(guid, name)| {
+        .filter_map(|&(guid, _)| {
             let (_, entity, _) = objects.iter().find(|(g, ..)| *g == guid)?;
-            Some((guid, name, bodies.get(entity).ok()?.translation()))
+            Some(bodies.get(entity).ok()?.translation())
         })
         .collect();
 
-    let settled = rts.on && rts.blend.is_none();
-    if settled {
+    if rts.settled() {
         let dt = time.delta_secs();
         let cursor_options = cursor.as_deref_mut();
         steer(
@@ -295,37 +289,13 @@ fn camera(
             &mut wheel,
             cursor_options,
         );
-        if buttons.just_pressed(MouseButton::Left) && !focus.hovering() {
-            let under = win.and_then(Window::cursor_position).and_then(|at| {
-                placed
-                    .iter()
-                    .filter_map(|&(guid, name, feet)| {
-                        let on_screen = view
-                            .world_to_viewport(view_global, feet + Vec3::Y * BODY_MIDDLE)
-                            .ok()?;
-                        Some((on_screen.distance(at), guid, name))
-                    })
-                    .filter(|(away, ..)| *away <= PICK_PIXELS)
-                    .min_by(|a, b| a.0.total_cmp(&b.0))
-            });
-            if let Some((_, guid, name)) = under {
-                let double = rts
-                    .last_click
-                    .is_some_and(|(g, at)| g == guid && now - at <= DOUBLE_CLICK_SECS);
-                rts.selected = Some(guid);
-                rts.last_click = (!double).then_some((guid, now));
-                if double && server.0.self_guid() != guid {
-                    server.0.swap_to(name);
-                }
-            }
-        }
     } else {
         wheel.clear();
     }
 
     if rts.on {
         if !placed.is_empty() {
-            let center = placed.iter().map(|(.., at)| *at).sum::<Vec3>() / placed.len() as f32;
+            let center = placed.iter().sum::<Vec3>() / placed.len() as f32;
             rts.focus = clamp_to_party(rts.focus, center);
         }
         // Ride the ground: snap on the first real height, then ease, so a hill never jolts the eye.

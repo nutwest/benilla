@@ -41,6 +41,11 @@ pub fn enable_world_pause() {
     OFFERED.store(true, Ordering::Relaxed);
 }
 
+/// Whether a consumer offered the party's commands.
+pub(crate) fn offered() -> bool {
+    OFFERED.load(Ordering::Relaxed)
+}
+
 /// Whether the world is paused, as of the server's last notice.
 pub fn world_paused() -> bool {
     world_clock::is_paused()

@@ -218,8 +218,8 @@ pub use glue_session::requests::SessionRequest;
 pub use local_state::share_character_state;
 pub use net::{enable_world_pause, mid_air, take_camera_toggle, world_paused, Objects};
 pub use player::{yield_camera, CameraPlaced};
-pub use target::Interact;
-pub use ui_script::UiFocus;
+pub use target::{Interact, PartySelection};
+pub use ui_script::{PartyFrameRect, PartyFrameRects, UiFocus};
 
 /// Builds and runs the client app. `build` is the launcher's compile-time git stamp, passed in as
 /// data so the sha lives in the shim's fingerprint and a commit does not recompile this crate.

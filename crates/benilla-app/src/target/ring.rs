@@ -25,7 +25,19 @@ pub(super) struct RingState {
     /// This frame's tint: the selector's colour or the combat flash's.
     color: Color,
     shown: bool,
+    /// The rings of a consumer's selected party members ([`super::PartySelection`]).
+    party: Vec<PartyRing>,
 }
+
+/// One selected member's ring, cached as the target's is.
+struct PartyRing {
+    guid: u64,
+    key: RingKey,
+    verts: Vec<EffectVertex>,
+}
+
+/// A selected member's ring colour, whatever the target's would be.
+const PARTY_RING_COLOR: Color = Color::srgb(0.25, 1.0, 0.35);
 
 /// The projection's inputs; while they hold still, the cached projection is reused.
 #[derive(Default, PartialEq, Clone, Copy)]
@@ -259,9 +271,59 @@ pub(super) fn update_ring(
         Query<(&NetEntity, Option<&SelectionRadius>), With<crate::entities::mount::MountBody>>,
         // The party roster: the selector's party table `0xbc6f48`.
         Res<crate::ui_party::GroupState>,
+        // A consumer's selected members, and the guids that find them.
+        Option<Res<super::PartySelection>>,
+        Option<Res<crate::net::GuidIndex>>,
     ),
 ) {
     let state = &mut *state;
+    // Before the target's: its arm leaves the angle current, and this needs it either way.
+    let party = targets.3.as_deref().map_or(&[][..], |p| &p.0[..]);
+    if !party.is_empty() {
+        *fade_angle = ring_fade_angle(&camera).unwrap_or(*fade_angle);
+    }
+    state.party.retain(|ring| party.contains(&ring.guid));
+    for &guid in party {
+        // The target's own ring already marks it.
+        let unit = targets
+            .4
+            .as_deref()
+            .and_then(|index| index.0.get(&guid).copied())
+            .filter(|_| selection.guid != Some(guid))
+            .and_then(|entity| targets.0.get(entity).ok());
+        let Some((unit, sel_radius, _, _, mount_child)) = unit else {
+            state.party.retain(|ring| ring.guid != guid);
+            continue;
+        };
+        let (local, mount_scale) = match mount_child.and_then(|mc| targets.1.get(mc.0).ok()) {
+            Some((mnet, msel)) => (msel.map_or(RING_FALLBACK_RADIUS, |r| r.0), mnet.scale),
+            None => (sel_radius.map_or(RING_FALLBACK_RADIUS, |r| r.0), 1.0),
+        };
+        let radius = local * (unit.scale.x * mount_scale).max(0.01);
+        let key = RingKey {
+            feet: unit.translation,
+            radius,
+            fade_angle: *fade_angle,
+            surfaces: decals.receiver_count(),
+        };
+        let at = match state.party.iter().position(|ring| ring.guid == guid) {
+            Some(at) => at,
+            None => {
+                state.party.push(PartyRing {
+                    guid,
+                    key: RingKey::default(),
+                    verts: Vec::new(),
+                });
+                state.party.len() - 1
+            }
+        };
+        let ring = &mut state.party[at];
+        if ring.key != key {
+            ring.verts.clear();
+            ring.key = key;
+            project_ring(&mut ring.verts, &decals, key.feet, radius, key.fade_angle);
+        }
+    }
     let hide = match selection.target {
         None => {
             *logged_guid = None;
@@ -402,6 +464,28 @@ pub(super) fn push_ring(
         return;
     };
     let Ok(cam) = cam.single() else { return };
+    let party_tint = PARTY_RING_COLOR.to_linear();
+    for ring in state.party.iter().filter(|ring| !ring.verts.is_empty()) {
+        let mut batch = draw
+            .batch(cam, assets.texture.id())
+            .additive()
+            .anchored(ring.key.feet)
+            .rung(
+                benilla_world::sky_order::Rung::RING,
+                benilla_world::sky_order::Rung::DECAL_RASTER,
+            );
+        batch.extend(ring.verts.iter().map(|v| EffectVertex {
+            pos: v.pos,
+            uv: v.uv,
+            color: [
+                party_tint.red,
+                party_tint.green,
+                party_tint.blue,
+                v.color[3],
+            ],
+        }));
+        batch.tris();
+    }
     if !state.shown || state.verts.is_empty() {
         return;
     }

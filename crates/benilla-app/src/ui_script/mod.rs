@@ -235,6 +235,9 @@ pub(crate) struct UiPaint;
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UiInput;
 
+mod party_frames;
+pub use party_frames::{PartyFrameRect, PartyFrameRects};
+
 /// The VM's views the input records read pushed ahead of them, at the head of [`UiInput`]: what an
 /// engine writer outside the calls moved after the last frame's feeds (the targeting cursor's
 /// word).
@@ -466,6 +469,9 @@ fn console_reload_ui(steps: &mut crate::console::ConsoleSteps, _args: &str) -> V
 
 impl Plugin for UiScriptPlugin {
     fn build(&self, app: &mut App) {
+        if crate::net::party_offered() {
+            app.add_systems(Last, party_frames::publish_party_frames);
+        }
         use crate::console::ConsoleCommandApp;
         // Category 1 with no help (`0x402ba6`-`0x402bb4`).
         app.console_command_in_call(
@@ -492,6 +498,7 @@ impl Plugin for UiScriptPlugin {
             .init_resource::<InspectMode>()
             .init_resource::<PlayerUiHover>()
             .init_resource::<UiKeyboardCapture>()
+            .init_resource::<PartyFrameRects>()
             .init_resource::<PlayerUiClickConsumed>()
             .init_resource::<PlayerUiPressConsumed>()
             .init_resource::<WorldPresses>()

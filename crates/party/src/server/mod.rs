@@ -15,6 +15,7 @@ mod layout;
 mod party;
 mod procs;
 mod rts;
+mod selection;
 mod setup;
 
 use layout::Layout;
@@ -239,7 +240,7 @@ impl Plugin for ServerPlugin {
             .add_systems(Startup, start)
             .add_systems(Update, (bridge, sample_units, report_in_world))
             .add_systems(First, walk)
-            .add_plugins(rts::RtsPlugin);
+            .add_plugins((rts::RtsPlugin, selection::SelectionPlugin));
     }
 }
 

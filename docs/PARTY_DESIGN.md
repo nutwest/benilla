@@ -595,7 +595,8 @@ fresh AI reads what is there.
 | Order | Set by | What the bot does |
 |---|---|---|
 | Move | Right-click on ground | Paths to its slot, then becomes Hold |
-| Hold | A finished Move | Stays put, and fights what reaches it without chasing |
+| Hold | A finished Move | Stays in place, and still fights within reach: melee adjacent, ranged and healers within their range |
+| Guard | A key in the RTS view, on the selected members | Engages what enters a radius around its post, then walks back |
 | Attack | Right-click on an enemy | Attacks it. When it dies, Hold where it stands |
 | Follow | Right-click on a party member | Follows and assists that member |
 | None | The default | Today's behaviour: follow the leader |
@@ -617,12 +618,21 @@ fresh AI reads what is there.
   - `RunAwayFromTarget`, one function with 5 callers.
   32 other `GetMotionMaster` calls sit in the class routines. Most clear motion and go idle, but
   each must be read when this is built.
+- **Reach, for Hold:** with `BeginChasing` gated, `SelectAttackTarget` must also drop what the bot
+  can't reach from where it stands, or it holds a target it can never hit. Melee reach is the melee
+  range. Ranged and healers use the 25 yd `BeginChasing` already sets as their caster chase
+  distance, and need line of sight.
+- **Guard,** from td-game's `Guard` stance (`units.rs`), radius 4 to 15 yd: the order carries a post
+  and a radius. The bot idles at the post, attacks what comes inside the radius, may chase inside
+  it, and paths back to the post when its target dies or leaves. Hold is the same order with no
+  radius but its own reach, so the two share their gates. In td-game `[` and `]` change the radius,
+  and the same keys suit here, with a marker ring drawn from M6c's decal path.
 - **Pathing:** mmaps are built and on for this install (`mmap.enabled = 1`, 1783 files). On a first
   run they build in the background for about 27 minutes, and until then `MovePoint` falls back to
   a straight line.
 - **`DrinkAndEat`, resurrection and revive** run ahead of all this, and stay as they are.
 
-**Sending orders.** `.party order <name> move x y z o | attack <guid> | follow <name> | hold | clear`,
+**Sending orders.** `.party order <name> move x y z o | attack <guid> | follow <name> | hold | guard x y z r | clear`,
 in party chat, one line per member. That is the path `.party pause` and `.party swap` use: the async
 thread queues it on the World messager, which writes the table. So it works while paused, and needs
 no map update. The AI acts on it at its first update after resume, and `PB_UPDATE_INTERVAL` delays
@@ -654,7 +664,8 @@ that by up to 1 s. It must stay party chat: a say would wait behind the map.
 - **Left click on empty ground:** clears. The game's own click still runs, so clicking an enemy
   targets it, and leaves the selection alone.
 - **Left drag:** a box, drawn as a Bevy node, selects the members whose projected middles are inside.
-  The app's click sees the drag's travel and does nothing.
+  The app's click sees the drag's travel and does nothing. While the camera is yielded, left starts
+  no look session, or the cursor would hide and lock mid-drag.
 - **Right drag:** still turns the camera. A right click gives the order.
 - **Picking what's under a right click:** `WorldPick` tests mesh triangles with no physics, so it
   works on a frozen world, and it needs a part drawn this frame, which the RTS view's are. Members
@@ -1283,11 +1294,10 @@ camera has no automated tests.
 
 **M6 — Selection and orders** (§2.3).
 
-**M6a — Selection, client only.**
-1. Click or drag by travel, on both buttons.
-2. Left click, Shift, click on empty ground, and the box with its drawn rectangle.
-3. Rings: `target/ring.rs` takes a list, with a public way to set it.
-4. The party frame outlines.
+**M6a — Selection, client only.** Built 2026-11-01: `crates/party/src/server/selection.rs`, the
+app's `PartySelection` and `PartyFrameRects`, and the ring list in `target/ring.rs`. The right button's
+click or drag comes with M6b's orders. Rings and outlines show while the RTS camera is on, and the
+selection waits while it is off. Covered by the touched modules' tests alone until the playtest.
 
 **Accept when:**
 - Click, Shift-click, box and clear each give the right set, paused and running, with no packet but
@@ -1299,7 +1309,7 @@ camera has no automated tests.
 **M6b — Orders.**
 1. **The handover first** (the riskiest unknown): the table, `.party order`, and Move on one member,
    swapped mid-walk in both directions, paused and running.
-2. The bot's Hold gates, then Attack and Follow.
+2. The bot's Hold gates, then Attack, Follow and Guard.
 3. The played character's orders, through `Approach` and `FollowState`.
 4. Right click: ground, enemy, member, to all selected.
 
@@ -1309,7 +1319,9 @@ camera has no automated tests.
 - **Attack:** all selected attack that enemy. When it dies they hold there.
 - **Follow:** a member follows the named member and assists it, including after that member is
   swapped.
-- **Hold:** a bot attacked in melee fights back and doesn't leave its spot by more than its reach.
+- **Hold:** a melee bot fights what is adjacent and a ranged bot or healer what is within its range,
+  and neither leaves its spot.
+- **Guard:** a bot engages what enters its radius, stays inside it, and walks back to its post after.
 - **Paused:** an order given while paused moves nothing until resume, then runs, with no burst.
 - **Swap:** an order survives a swap in both directions, with no stop or snap beyond the swap's own.
 - **The played character** obeys, and a movement key ends its order.

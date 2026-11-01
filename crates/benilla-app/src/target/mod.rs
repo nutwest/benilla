@@ -252,6 +252,11 @@ pub(crate) fn go_is_nearest(character: &Hovered, go: &HoveredObject) -> bool {
 #[derive(Component, Clone, Copy)]
 pub(crate) struct SelectionRadius(pub(crate) f32);
 
+/// Deviation: 1.12 selects one target. A consumer's selected party members, by guid, each with a
+/// ring under it (`ring`); empty hides them.
+#[derive(Resource, Default)]
+pub struct PartySelection(pub Vec<u64>);
+
 /// The set the targeting chain's frame-time half runs in: readers of [`Selection`], [`Hovered`]
 /// or [`CombatFlash`] order after it, or they can read last frame's verdict.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -302,6 +307,7 @@ impl Plugin for TargetPlugin {
         crate::field_callbacks::register(app);
         release::register(app);
         app.init_resource::<Selection>()
+            .init_resource::<PartySelection>()
             .init_resource::<ClickConfig>()
             .init_resource::<AssistAttack>()
             .init_resource::<Hovered>()

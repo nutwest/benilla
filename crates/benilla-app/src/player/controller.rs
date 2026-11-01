@@ -211,7 +211,8 @@ pub(super) fn sample_look(
         &mut player.face_yaw,
         &mut window,
         &mut opts_shadow,
-        inspect.enabled,
+        // A consumer holding the camera has left for its box: the click stands, the look doesn't.
+        inspect.enabled || super::camera_yielded(),
         &mut arm,
         *pointer.1,
         &dynamics,
