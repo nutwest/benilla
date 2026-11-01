@@ -42,8 +42,6 @@ pub(crate) enum Input {
     ToggleAutoRun,
     /// `ToggleSheath()`.
     ToggleSheath,
-    /// `ToggleWorldPause()`, the party's pause binding (`crate::net`).
-    WorldPause,
     /// `CameraZoomIn([yards])`, its yards in [`BindingsState::amount`].
     CameraZoomIn,
     /// `CameraZoomOut([yards])`, its yards in [`BindingsState::amount`].
@@ -73,7 +71,6 @@ fn fired_input(input: FiredInput) -> (Input, f32) {
         FiredInput::ToggleRun => (Input::ToggleRun, 1.0),
         FiredInput::ToggleAutoRun => (Input::ToggleAutoRun, 1.0),
         FiredInput::ToggleSheath => (Input::ToggleSheath, 1.0),
-        FiredInput::WorldPause => (Input::WorldPause, 1.0),
         FiredInput::CameraZoomIn(yards) => (Input::CameraZoomIn, yards),
         FiredInput::CameraZoomOut(yards) => (Input::CameraZoomOut, yards),
     }

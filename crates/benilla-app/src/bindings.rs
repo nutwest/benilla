@@ -970,6 +970,7 @@ fn physically_down(
 /// One matching press: the command's body with `keystate = "down"`, and a latch on its input so
 /// the release can run the up-half.
 fn press(state: &mut BindingLatches, script: Option<&mut UiScript>, command: &str, key: Held) {
+    crate::net::note_binding_press(command);
     if let Some(s) = script {
         if let Err(e) = s.execute_binding(command, true) {
             warn!("bindings({command}): {e}");

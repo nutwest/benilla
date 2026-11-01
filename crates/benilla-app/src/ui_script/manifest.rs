@@ -206,7 +206,15 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
     match benilla_ui::bindings_xml::parse(&benilla_ui::source::decode(&bytes)) {
         Ok(bindings) => {
             script.register_bindings(&bindings);
-            crate::net::register_pause_binding(script);
+            if let Some((row, labels)) = crate::net::pause_binding_row() {
+                script.register_bindings(&[row]);
+                let globals = script.lua().globals();
+                for (name, label) in labels {
+                    if let Err(e) = globals.set(name, label) {
+                        error!("ui_script: the pause binding's label: {e}");
+                    }
+                }
+            }
             info!(
                 "bindings: {} commands registered from {}",
                 bindings.len(),

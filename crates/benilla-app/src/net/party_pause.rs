@@ -4,18 +4,17 @@
 //! and sound run on.
 //!
 //! The pause is a consumer's to offer ([`enable_world_pause`]): it adds a bindable command, and
-//! without it nothing here runs. The key asks the server, whose answer is what freezes us.
+//! without it nothing here runs but the notice. The key asks the server, whose answer is what
+//! freezes us.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::bindings_xml::Binding;
-use benilla_ui::script::UiScript;
 use benilla_world::world_clock;
 use bevy::prelude::*;
 
 use super::{NetHandlerApp, NetStatus, SelfGuid};
-use crate::bindings::{BindingsState, Input};
 use crate::glue_session::requests::SessionRequest;
 
 /// The command, its section and their window labels.
@@ -27,6 +26,8 @@ const HEADER_LABEL: &str = "Party";
 const DEFAULT_KEY: &str = "F7";
 
 static OFFERED: AtomicBool = AtomicBool::new(false);
+/// The command's press, for the next [`ask_on_key`].
+static PRESSED: AtomicBool = AtomicBool::new(false);
 
 /// Offers the world pause: a Key Bindings row, default F7, that asks the fork's `.party pause`.
 /// Call it before the app runs, on a server that has the command.
@@ -46,29 +47,31 @@ pub(crate) fn default_binding() -> Option<benilla_ui::script::keybind::KeyBindin
         .then(|| (DEFAULT_KEY.to_string(), COMMAND.to_string()))
 }
 
-/// Registers the command beside the core's, when offered: a row of the Key Bindings window, whose
-/// labels are the `BINDING_*` globals.
-pub(crate) fn register_binding(script: &UiScript) {
-    if !OFFERED.load(Ordering::Relaxed) {
-        return;
-    }
-    script.register_bindings(&[Binding {
-        name: COMMAND.to_string(),
-        header: Some(HEADER.to_string()),
-        run_on_up: false,
-        hidden: false,
-        platform: None,
-        body: "ToggleWorldPause()".to_string(),
-    }]);
-    let globals = script.lua().globals();
-    let labels = [
-        (format!("BINDING_NAME_{COMMAND}"), COMMAND_LABEL),
-        (format!("BINDING_HEADER_{HEADER}"), HEADER_LABEL),
-    ];
-    for (name, label) in labels {
-        if let Err(e) = globals.set(name, label) {
-            error!("net: the pause binding's label: {e}");
-        }
+/// The command's row beside the core's, when offered, and the `BINDING_*` globals that label it in
+/// the Key Bindings window. Its body is empty: 1.12 has no Lua call for this, and adding one would
+/// show it to addons, so [`note_press`] takes the command by name.
+pub(crate) fn binding_row() -> Option<(Binding, [(String, &'static str); 2])> {
+    OFFERED.load(Ordering::Relaxed).then(|| {
+        let row = Binding {
+            name: COMMAND.to_string(),
+            header: Some(HEADER.to_string()),
+            run_on_up: false,
+            hidden: false,
+            platform: None,
+            body: String::new(),
+        };
+        let labels = [
+            (format!("BINDING_NAME_{COMMAND}"), COMMAND_LABEL),
+            (format!("BINDING_HEADER_{HEADER}"), HEADER_LABEL),
+        ];
+        (row, labels)
+    })
+}
+
+/// The binding dispatch's press of `command`: ours is noted for [`ask_on_key`].
+pub(crate) fn note_press(command: &str) {
+    if command == COMMAND {
+        PRESSED.store(true, Ordering::Relaxed);
     }
 }
 
@@ -98,8 +101,8 @@ fn on_party_pause(In(ev): In<SessionEvent>, mut virt: ResMut<Time<Virtual>>) {
 
 /// The binding's press: asks for the state we are not in. Party chat, as a say would wait behind a
 /// paused map on the server.
-fn ask_on_key(binds: Res<BindingsState>, mut session: MessageWriter<SessionRequest>) {
-    if binds.fired(Input::WorldPause) {
+fn ask_on_key(mut session: MessageWriter<SessionRequest>) {
+    if PRESSED.swap(false, Ordering::Relaxed) {
         let want = if world_paused() { "off" } else { "on" };
         session.write(SessionRequest::PartyCommand(format!(".party pause {want}")));
     }

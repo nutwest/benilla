@@ -51,7 +51,8 @@ pub(crate) use game_time::GameTime;
 pub(crate) use game_time::{clock_tick, GameTimeLive, ServerTime};
 pub(crate) use handlers::NetHandlerApp;
 pub(crate) use party_pause::{
-    default_binding as pause_default_binding, register_binding as register_pause_binding,
+    binding_row as pause_binding_row, default_binding as pause_default_binding,
+    note_press as note_binding_press,
 };
 pub use party_pause::{enable_world_pause, world_paused};
 
