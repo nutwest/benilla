@@ -2046,6 +2046,7 @@ mod tests {
             delta: Duration::from_millis(16),
             at: startup + Duration::from_millis(90_016),
             elapsed: Duration::from_millis(90_016),
+            ..Default::default()
         });
         let mut dying = UiScript::new().unwrap();
         dying.set_now(90.0);

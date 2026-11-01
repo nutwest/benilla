@@ -234,9 +234,9 @@ pub(crate) struct UiTick;
 /// `Cooldown.lua:3` gates on `start > 0`, so a reset would hide every running cooldown's sweep.
 #[derive(Resource)]
 pub(crate) struct UiClock {
-    /// [`FrameStep::at`] at the tick that produced [`Self::ui_now`].
+    /// [`FrameStep::world_at`] at the tick that produced [`Self::ui_now`].
     ///
-    /// [`FrameStep::at`]: benilla_world::frame_pace::FrameStep::at
+    /// [`FrameStep::world_at`]: benilla_world::frame_pace::FrameStep::world_at
     pub(crate) anchor: std::time::Instant,
     /// The VM clock after that tick, in seconds since this process started.
     pub(crate) ui_now: f64,

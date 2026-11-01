@@ -489,7 +489,7 @@ pub(super) fn register(app: &mut App) {
 
 /// The millisecond clock `0x42c010` reads, here the paced frame clock the frame time is taken from.
 pub(crate) fn clock_tick(step: &FrameStep) -> u32 {
-    step.elapsed.as_millis() as u32
+    step.world_elapsed().as_millis() as u32
 }
 
 /// The client tick handler (`0x401ec0` → `0x6c5d50`): the clock takes the frame time. The reference
@@ -497,7 +497,7 @@ pub(crate) fn clock_tick(step: &FrameStep) -> u32 {
 pub(crate) fn tick_game_time(step: Res<FrameStep>, mut server: ResMut<ServerTime>) {
     server
         .0
-        .tick_frame(step.delta.as_secs_f32(), clock_tick(&step));
+        .tick_frame(step.world_delta().as_secs_f32(), clock_tick(&step));
 }
 
 /// Publish the session clock into [`WorldTime`] each frame, as `StampLightState` (`0x482bcc`) stamps

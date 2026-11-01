@@ -567,16 +567,17 @@ pub(super) fn tick_script(
             // Under the loading screen the pass calls no `OnUpdate` and drops the frame's time
             // (`0x4424b9`, `0x4426c3`), so the first walk after the reveal gets one frame's.
             if covered {
-                script.tick_covered(step.delta.as_secs_f32());
+                script
+                    .tick_covered_held(step.delta.as_secs_f32(), step.world_delta().as_secs_f32());
             } else {
-                script.tick(step.delta.as_secs_f32());
+                script.tick_held(step.delta.as_secs_f32(), step.world_delta().as_secs_f32());
             }
         }
         // The VM's clock anchored at the instant the paced clock stands at, which moves by the same
         // steps; every `Instant` to `GetTime` conversion goes through this pair, never
         // `Instant::now()`.
         *ui_clock = super::UiClock {
-            anchor: step.at,
+            anchor: step.world_at(),
             ui_now: script.now(),
         };
         let us_tick = lap();

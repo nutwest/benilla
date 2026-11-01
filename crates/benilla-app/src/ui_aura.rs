@@ -1032,9 +1032,10 @@ impl crate::script_calls::live::LiveFamily for AuraLive<'_, '_> {
 /// its reading now less the time between.
 fn stamp_clock_at(step: &benilla_world::frame_pace::FrameStep, at: std::time::Instant) -> f64 {
     let now = step.elapsed_secs_f64();
-    match step.at.checked_duration_since(at) {
+    let stands = step.world_at();
+    match stands.checked_duration_since(at) {
         Some(behind) => now - behind.as_secs_f64(),
-        None => now + at.duration_since(step.at).as_secs_f64(),
+        None => now + at.duration_since(stands).as_secs_f64(),
     }
 }
 
@@ -1316,6 +1317,7 @@ mod tests {
             delta: Duration::from_millis(16),
             at,
             elapsed: Duration::from_millis(100_016),
+            ..Default::default()
         };
         // The VM's clock stands where the stamps' does, as the VM's seed puts it.
         let expiry = |anchor: Instant, ui_now: f64| {

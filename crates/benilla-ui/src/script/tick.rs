@@ -359,7 +359,14 @@ impl super::UiScript {
     /// range); drains the layout again (`0x765799`); then re-picks the hover against those rects
     /// (`0x7657be`). The draw pass fires `OnUpdateModel`.
     pub fn tick(&mut self, elapsed: f32) {
-        self.advance_clock_and_events(elapsed);
+        self.tick_held(elapsed, elapsed);
+    }
+
+    /// Deviation: [`Self::tick`] for a world that can pause, which 1.12 cannot: `OnUpdate` keeps the
+    /// frame's `elapsed`, so menus and fades run, and `GetTime()` advances by `clock`, the world's
+    /// step, so a cast bar and a cooldown sweep hold.
+    pub fn tick_held(&mut self, elapsed: f32, clock: f32) {
+        self.advance_clock_and_events(clock);
         self.resolve();
         self.update_walk(elapsed);
         self.resolve();
@@ -390,14 +397,19 @@ impl super::UiScript {
     /// (`0x4426c3`): the next walk gets its own frame's. The clock and the queued events still
     /// advance, being no part of the layer.
     pub fn tick_covered(&mut self, elapsed: f32) {
-        self.advance_clock_and_events(elapsed);
+        self.tick_covered_held(elapsed, elapsed);
+    }
+
+    /// [`Self::tick_covered`] on the world's step, as [`Self::tick_held`].
+    pub fn tick_covered_held(&mut self, _elapsed: f32, clock: f32) {
+        self.advance_clock_and_events(clock);
     }
 
     /// The `GetTime()` clock, then the events queued since the last tick and the item and spell
     /// tooltips the caches answered (`0x52e530`, `0x52f820`), all ahead of the tick's `OnUpdate`.
-    fn advance_clock_and_events(&mut self, elapsed: f32) {
+    fn advance_clock_and_events(&mut self, clock: f32) {
         self.model_mut().nameplates.begin_update();
-        self.model_mut().now += f64::from(elapsed);
+        self.model_mut().now += f64::from(clock);
         let pending = std::mem::take(&mut self.model_mut().pending_events);
         for (event, args) in pending {
             self.fire_event(&event, args);
