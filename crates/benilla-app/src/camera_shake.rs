@@ -667,7 +667,7 @@ mod tests {
             deck: None,
             final_facing: benilla_protocol::MonsterMoveFacing::None,
             points: vec![[0.0; 3], [1.0, 0.0, 0.0]],
-            start: std::time::Instant::now(),
+            start: benilla_world::world_clock::now(),
             duration: std::time::Duration::from_secs(1),
             id: 1,
             grounded,

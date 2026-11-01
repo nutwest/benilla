@@ -3,7 +3,6 @@
 //! and the positions as the handlers left them, each answer derived as the reference's getter
 //! derives it at the call (`0x4ab4a0`, `0x4ab0b0`, `0x4ab9d0`, `0x4abf90`).
 
-use std::time::Instant;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -137,11 +136,11 @@ impl crate::script_calls::live::LiveFamily for BattlefieldLive<'_, '_> {
             Some(slot_view(
                 queue.slots().get(q.0)?.as_ref(),
                 catalog,
-                Instant::now(),
+                benilla_world::world_clock::now(),
             ))
         }) || ask.answer(|_: &BattlefieldTimesQuery| {
             let queue = self.queue.as_deref()?;
-            let now = Instant::now();
+            let now = benilla_world::world_clock::now();
             Some(BattlefieldTimes {
                 instance_expiration_ms: queue.instance_expiration_ms(now),
                 run_time_ms: queue.run_time_ms(now),

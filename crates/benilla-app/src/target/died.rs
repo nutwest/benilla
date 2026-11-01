@@ -212,7 +212,7 @@ pub(super) struct Died<'w, 's> {
     /// The release timer our own death arms.
     death: ResMut<'w, crate::death::DeathNet>,
     /// The real clock the release timer counts on, as the death getters read it.
-    time: Res<'w, Time<Real>>,
+    time: Res<'w, Time<benilla_world::world_clock::WorldClock>>,
     group: Res<'w, crate::ui_party::GroupState>,
     names: Res<'w, crate::names::NameCache>,
     stores: Query<'w, 's, &'static ObjectStore>,
@@ -604,8 +604,8 @@ mod tests {
         let world = c.world();
         world.resource_mut::<crate::net::NetStatus>().connected = true;
         world
-            .resource_mut::<Time<bevy::time::Real>>()
-            .update_with_duration(std::time::Duration::ZERO);
+            .resource_mut::<Time<benilla_world::world_clock::WorldClock>>()
+            .advance_by(std::time::Duration::ZERO);
         crate::script_calls::insert_test_vm(world);
         c.lua(
             r#"DEAD = {} local f = CreateFrame("Frame") f:RegisterEvent("PLAYER_DEAD")
@@ -662,8 +662,8 @@ mod tests {
 
         c.values(ME, &[(FIELD_UNIT_HEALTH, 100)]);
         c.world()
-            .resource_mut::<Time<bevy::time::Real>>()
-            .update_with_duration(std::time::Duration::from_secs(400));
+            .resource_mut::<Time<benilla_world::world_clock::WorldClock>>()
+            .advance_by(std::time::Duration::from_secs(400));
         c.values(ME, &[(FIELD_UNIT_HEALTH, 0)]);
         let second = dead_reads(&mut c);
         assert_eq!(second.len(), 2, "{second:?}");

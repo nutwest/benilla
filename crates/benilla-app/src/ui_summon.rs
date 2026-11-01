@@ -159,7 +159,7 @@ pub(crate) mod net {
         self_guid: Res<SelfGuid>,
         index: Res<GuidIndex>,
         stores: Query<&ObjectStore>,
-        real_clock: Res<Time<Real>>,
+        real_clock: Res<Time<benilla_world::world_clock::WorldClock>>,
     ) {
         if let SessionEvent::SummonRequest {
             summoner,

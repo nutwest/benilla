@@ -4,7 +4,6 @@
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_protocol::{JumpInfo, MoveSpeeds};
 use bevy::prelude::*;
-use bevy::time::Real;
 
 use crate::creature_anim::move_flags;
 use crate::player::{GRAVITY, TERMINAL_VELOCITY};

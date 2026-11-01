@@ -22,7 +22,6 @@
 
 use benilla_formats::AreaPoi;
 use bevy::prelude::*;
-use bevy::time::Real;
 
 use benilla_assets::coords::bevy_to_wow;
 
@@ -80,7 +79,7 @@ impl PoiMarker {
 pub(crate) fn expire_marker(
     mut marker: ResMut<PoiMarker>,
     player: Res<Player>,
-    time: Res<Time<Real>>,
+    time: Res<Time<benilla_world::world_clock::WorldClock>>,
 ) {
     let Some(poi) = &marker.poi else {
         return;
@@ -113,7 +112,7 @@ fn on_gossip_poi(
     In(ev): In<benilla_protocol::SessionEvent>,
     mut marker: ResMut<PoiMarker>,
     current_map: Option<Res<benilla_world::world_map::CurrentMap>>,
-    real_clock: Res<Time<Real>>,
+    real_clock: Res<Time<benilla_world::world_clock::WorldClock>>,
 ) {
     if let benilla_protocol::SessionEvent::GossipPoi(poi) = ev {
         gossip_poi(

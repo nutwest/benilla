@@ -228,7 +228,7 @@ pub(super) fn drive_self_ride(
 #[cfg(test)]
 mod tests {
     use std::f32::consts::FRAC_PI_2;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use super::*;
 

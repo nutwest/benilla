@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn the_request_throttle_is_the_references_five_seconds() {
         let mut s = BattlefieldPositions::default();
-        let t0 = Instant::now();
+        let t0 = benilla_world::world_clock::now();
         assert!(s.request_due(t0), "the first request goes out");
         assert!(!s.request_due(t0 + Duration::from_millis(4999)));
         assert!(s.request_due(t0 + REQUEST_THROTTLE));

@@ -1459,7 +1459,7 @@ mod swim_gate {
 /// that must not be; the trench floor is flat under the whole mid-path window.
 #[cfg(test)]
 mod server_moved_players {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use avian3d::prelude::*;
     use benilla_assets::coords::wow_to_bevy;
@@ -1794,7 +1794,7 @@ mod server_moved_players {
 /// walking, where every face is a backface; a walker on a hill; re-basing on a new path.
 #[cfg(test)]
 mod inside_a_hull {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use avian3d::prelude::*;
     use benilla_protocol::EntityKind;
@@ -2140,7 +2140,7 @@ mod inside_a_hull {
 #[cfg(test)]
 mod final_facing_tests {
     use std::f32::consts::{FRAC_PI_2, PI};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use benilla_assets::coords::wow_to_bevy;
     use benilla_protocol::{CreateSpline, MonsterMoveFacing};

@@ -562,7 +562,7 @@ mod tests {
             packet(&mut app, log(true, vec![score(0x9, 3, 0, 0)])),
             [BattlefieldEvent::Score]
         );
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         {
             let mut board = app.world_mut().resource_mut::<BattlefieldScoreboard>();
             assert!(board.request_due(now));
@@ -702,7 +702,7 @@ mod tests {
         packet(&mut app, log(true, Vec::new()));
         app.world_mut()
             .resource_mut::<BattlefieldScoreboard>()
-            .last_request = Some(Instant::now());
+            .last_request = Some(benilla_world::world_clock::now());
 
         crate::net::handlers::dispatch(
             app.world_mut(),

@@ -6,7 +6,6 @@
 //! `Map.dbc` and the map the world stands on (`0x48a750`, `0x495c90`), each as the handlers left
 //! it.
 
-use std::time::Instant;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -35,7 +34,7 @@ pub(crate) struct DialogLive<'w, 's> {
     summon: Option<Res<'w, crate::ui_summon::SummonState>>,
     names: Option<Res<'w, crate::names::NameCache>>,
     /// The real clock the summon deadline and the reset window run on.
-    real: Option<Res<'w, Time<Real>>>,
+    real: Option<Res<'w, Time<benilla_world::world_clock::WorldClock>>>,
     instance: Option<Res<'w, crate::ui_instance::InstanceState>>,
     maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
     map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
@@ -59,11 +58,15 @@ impl crate::script_calls::live::LiveFamily for DialogLive<'_, '_> {
                     .pending()
                     .is_some_and(|npc| reach.polled(npc)),
             )
-        }) || ask.answer(|_: &InstanceBootSecsQuery| Some(self.boot.as_ref()?.secs(Instant::now())))
-            || ask.answer(|_: &AreaSpiritHealerSecsQuery| {
-                Some(self.spirit.as_ref()?.secs(Instant::now()))
-            })
-            || ask.answer(|_: &MeetingStoneQuery| Some(self.stone.as_ref()?.status(areas)))
+        }) || ask.answer(|_: &InstanceBootSecsQuery| {
+            Some(self.boot.as_ref()?.secs(benilla_world::world_clock::now()))
+        }) || ask.answer(|_: &AreaSpiritHealerSecsQuery| {
+            Some(
+                self.spirit
+                    .as_ref()?
+                    .secs(benilla_world::world_clock::now()),
+            )
+        }) || ask.answer(|_: &MeetingStoneQuery| Some(self.stone.as_ref()?.status(areas)))
             || ask.answer(|_: &SummonConfirmQuery| {
                 let now = self.real.as_ref()?.elapsed_secs_f64();
                 Some(

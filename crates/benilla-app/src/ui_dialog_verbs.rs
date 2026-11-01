@@ -249,7 +249,7 @@ impl BattlefieldQueue {
     /// only if it was active, but leaves the active index (`[0x8457cc]`) alone. `None` for a slot
     /// past the three, which ends the handler before any write or signal.
     pub(crate) fn apply(&mut self, status: BattlefieldStatus) -> Option<StatusApplied> {
-        self.apply_at(status, Instant::now())
+        self.apply_at(status, benilla_world::world_clock::now())
     }
 
     fn apply_at(&mut self, status: BattlefieldStatus, now: Instant) -> Option<StatusApplied> {
@@ -987,7 +987,12 @@ mod net {
         mut lane: ResMut<DialogLane>,
     ) {
         if let SessionEvent::RaidGroupOnly { delay_ms, reason } = ev {
-            boot.apply(delay_ms, reason, std::time::Instant::now(), &mut lane);
+            boot.apply(
+                delay_ms,
+                reason,
+                benilla_world::world_clock::now(),
+                &mut lane,
+            );
         }
     }
 
@@ -1015,7 +1020,7 @@ mod net {
                 }
                 super::send_healer_query(&change, &net);
             }
-            if spirit.on_time(healer, ms, std::time::Instant::now()) {
+            if spirit.on_time(healer, ms, benilla_world::world_clock::now()) {
                 lane.write(FieldNotice::Global {
                     id: id::AREA_SPIRIT_HEALER_IN_RANGE,
                 });
@@ -1177,7 +1182,7 @@ mod tests {
             },
             "a fresh adopt asks for the clock"
         );
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         spirit.on_time(7, 30_000, now);
         assert_eq!(spirit.secs(now), 30, "the wave clock is armed");
 
@@ -1197,7 +1202,7 @@ mod tests {
     fn dropping_a_healer_cancels_the_wave_and_sends_nothing() {
         let mut spirit = AreaSpiritHealer::default();
         spirit.set_healer(Some(7));
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         spirit.on_time(7, 30_000, now);
 
         assert_eq!(
@@ -1226,7 +1231,7 @@ mod tests {
     fn a_clock_for_another_healer_is_ignored() {
         let mut spirit = AreaSpiritHealer::default();
         spirit.set_healer(Some(7));
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         spirit.on_time(8, 30_000, now);
         assert_eq!(spirit.secs(now), 0, "not our healer");
         spirit.on_time(7, 0, now);
@@ -1239,7 +1244,7 @@ mod tests {
     fn clicking_the_cached_guide_still_asks_again() {
         let mut spirit = AreaSpiritHealer::default();
         spirit.set_healer(Some(7));
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         spirit.on_time(7, 30_000, now);
 
         let outcome = spirit.click_guide(7);
@@ -1790,7 +1795,7 @@ mod tests {
         let stop = || DialogSignal::Event("INSTANCE_BOOT_STOP".into(), vec![]);
         let mut boot = InstanceBoot::default();
         let mut lane = DialogLane::default();
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut apply = |boot: &mut InstanceBoot, delay, reason| {
             boot.apply(delay, reason, now, &mut lane);
             lane.take()
@@ -1816,7 +1821,7 @@ mod tests {
     #[test]
     fn the_spirit_healer_clock_only_arms_for_the_cached_healer() {
         let mut spirit = AreaSpiritHealer::default();
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         assert!(
             !spirit.on_time(0x77, 30_000, now),
             "no healer cached: the packet is ignored"
@@ -1857,7 +1862,7 @@ mod tests {
     #[test]
     fn a_run_longer_than_any_uptime_reads_forwards() {
         let mut q = BattlefieldQueue::default();
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         q.apply_at(
             BattlefieldStatus {
                 slot: 0,
@@ -1881,7 +1886,7 @@ mod tests {
     #[test]
     fn the_instance_clocks_follow_the_status_handler() {
         let mut q = BattlefieldQueue::default();
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         let mut active = BattlefieldStatus {
             slot: 0,
             map_id: 489,
@@ -2024,7 +2029,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<BattlefieldQueue>();
         net::register(&mut app);
-        let now = Instant::now();
+        let now = benilla_world::world_clock::now();
         {
             let mut q = app.world_mut().resource_mut::<BattlefieldQueue>();
             q.apply_at(

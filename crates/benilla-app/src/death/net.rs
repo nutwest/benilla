@@ -56,7 +56,7 @@ fn on_corpse_reclaim_delay(
     mut death_net: ResMut<DeathNet>,
     latches: Res<DeathLatches>,
     mut lane: ResMut<DialogLane>,
-    real_clock: Res<Time<Real>>,
+    real_clock: Res<Time<benilla_world::world_clock::WorldClock>>,
 ) {
     if let SessionEvent::CorpseReclaimDelay { delay_ms } = ev {
         corpse_reclaim_delay(delay_ms, real_clock.elapsed_secs_f64(), &mut death_net);

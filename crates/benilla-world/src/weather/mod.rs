@@ -217,7 +217,7 @@ fn parse_env_script(v: &str) -> Vec<EnvStep> {
 }
 
 fn weather_tick(
-    time: Res<Time<Real>>,
+    time: Res<Time<crate::world_clock::WorldClock>>,
     mut msgs: MessageReader<WeatherMessage>,
     mut state: ResMut<WeatherState>,
     mut debug: ResMut<DebugState>,

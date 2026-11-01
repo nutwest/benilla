@@ -296,7 +296,7 @@ pub(crate) mod net {
         mut state: ResMut<InstanceState>,
         mut lane: ResMut<crate::ui_dialog_verbs::DialogLane>,
         maps: Option<Res<benilla_assets::MapCatalogRes>>,
-        time: Option<Res<Time<Real>>>,
+        time: Option<Res<Time<benilla_world::world_clock::WorldClock>>>,
     ) {
         match ev {
             SessionEvent::RaidInstanceMessage { message } => {
@@ -420,7 +420,7 @@ pub(crate) mod net {
 pub(crate) struct ManagerCreate<'w> {
     state: ResMut<'w, InstanceState>,
     maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
-    time: Option<Res<'w, Time<Real>>>,
+    time: Option<Res<'w, Time<benilla_world::world_clock::WorldClock>>>,
 }
 
 impl ManagerCreate<'_> {
@@ -825,7 +825,7 @@ mod tests {
         .with_instance_types([(36, 1), (409, 2)]);
         let mut world = World::new();
         world.init_resource::<InstanceState>();
-        world.init_resource::<Time<Real>>();
+        world.init_resource::<Time<benilla_world::world_clock::WorldClock>>();
         world.insert_resource(benilla_assets::MapCatalogRes(maps));
         let created = |world: &mut World, map: u32| {
             world

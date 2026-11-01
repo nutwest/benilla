@@ -16,7 +16,6 @@
 //! and 0x28, else `0x6e2ea0` and 0x3c), the power gate `0x60962c` (items skip it), and the opcode
 //! (`0x6e57d8`: `0xab` vs `0x12e`).
 
-use std::time::Instant;
 
 use benilla_protocol::messages::UseItemTarget;
 use bevy::ecs::system::SystemParam;

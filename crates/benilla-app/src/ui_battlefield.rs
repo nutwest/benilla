@@ -246,7 +246,7 @@ impl BattlefieldSteps<'_> {
                 let due = self
                     .board
                     .as_deref_mut()
-                    .is_some_and(|b| b.request_due(Instant::now()));
+                    .is_some_and(|b| b.request_due(benilla_world::world_clock::now()));
                 if due {
                     let _ = self.net.0.send(ClientCommand::RequestBattlefieldScoreData);
                 }
@@ -281,7 +281,7 @@ impl BattlefieldSteps<'_> {
                     .is_none()
                 {
                     positions.clear_teammates();
-                } else if positions.request_due(Instant::now()) {
+                } else if positions.request_due(benilla_world::world_clock::now()) {
                     let _ = self.net.0.send(ClientCommand::RequestBattlefieldPositions);
                 }
             }
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn a_waited_span_longer_than_any_uptime_reads_forwards() {
-        let at = Instant::now();
+        let at = benilla_world::world_clock::now();
         let mut queued = status(0, 489, 1);
         queued.queued = Some((0, u32::MAX));
         let v = slot_view(Some(&(queued.clone(), at)), None, at);
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn the_slot_view_reduces_the_clocks() {
-        let at = Instant::now();
+        let at = benilla_world::world_clock::now();
         let mut queued = status(0, 489, 1);
         queued.queued = Some((30_000, 5_000));
         let later = at + std::time::Duration::from_millis(2_000);

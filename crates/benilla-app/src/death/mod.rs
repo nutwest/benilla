@@ -203,7 +203,7 @@ pub(crate) struct DeathView<'w, 's> {
     self_guid: Res<'w, SelfGuid>,
     death_net: Res<'w, DeathNet>,
     // Real time: `reclaim_at` is stamped on `Time<Real>` by the net path.
-    time: Res<'w, Time<Real>>,
+    time: Res<'w, Time<benilla_world::world_clock::WorldClock>>,
     objects: Objects<'w, 's>,
     transforms: Query<'w, 's, &'static Transform>,
     status: Res<'w, crate::net::NetStatus>,
@@ -873,7 +873,7 @@ mod tests {
             .init_resource::<DeathLatches>()
             .init_resource::<crate::net::GuidIndex>()
             .init_resource::<crate::items::Items>()
-            .init_resource::<Time<Real>>();
+            .init_resource::<Time<benilla_world::world_clock::WorldClock>>();
         let mut script = UiScript::new().unwrap();
         script.keep_calls();
         script.set_money(1_000);
@@ -1105,7 +1105,7 @@ mod tests {
         let world = app.world_mut();
         let mut pending = world.resource_mut::<crate::spell::PendingCast>();
         pending.fill_record();
-        pending.push(FIREBALL, None, std::time::Instant::now());
+        pending.push(FIREBALL, None, benilla_world::world_clock::now());
         arm_repeat(&mut app);
         let _ = rx.try_iter().count();
         press_soulstone(&mut app);
@@ -1315,7 +1315,7 @@ mod tests {
         }
         app.world_mut()
             .resource_mut::<crate::spell::PendingCast>()
-            .push(FIREBALL, None, std::time::Instant::now());
+            .push(FIREBALL, None, benilla_world::world_clock::now());
         let _ = rx.try_iter().count();
         press_soulstone(&mut app);
 
@@ -1338,7 +1338,7 @@ mod tests {
             .lock_item(STONE);
         app.world_mut()
             .resource_mut::<crate::spell::PendingCast>()
-            .push(FIREBALL, None, std::time::Instant::now());
+            .push(FIREBALL, None, benilla_world::world_clock::now());
         let _ = rx.try_iter().count();
         press_soulstone(&mut app);
         let sent: Vec<_> = rx.try_iter().collect();
@@ -1397,7 +1397,7 @@ mod tests {
             .init_resource::<crate::names::NameCache>()
             .init_resource::<crate::net::GuidIndex>()
             .init_resource::<crate::items::Items>()
-            .init_resource::<Time<Real>>()
+            .init_resource::<Time<benilla_world::world_clock::WorldClock>>()
             .insert_resource(State::new(crate::client_state::ClientState::InWorld))
             .add_plugins(crate::ui_world_enter::WorldEnterPlugin);
         app.insert_non_send_resource(recording_vm());
