@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 use bevy::prelude::*;
 use bevy::time::{Real, TimeSystems, TimeUpdateStrategy, Virtual};
 
+use crate::world_clock::WorldClock;
+
 /// Recent raw deltas the refresh-period median is taken over, about a third of a second at 60 Hz.
 const WINDOW: usize = 20;
 /// A sample counts as "on cadence" when it is within this fraction of the median.
@@ -164,6 +166,11 @@ pub struct FrameStep {
     pub at: Instant,
     /// The paced clock since `Time<Real>`'s first update: its `elapsed` less the carry.
     pub elapsed: Duration,
+    /// How far the world clock stands behind [`Self::at`]: the time paused
+    /// ([`crate::world_clock`]), 0 in 1.12.
+    pub paused_lag: Duration,
+    /// The part of [`Self::delta`] this frame spent paused.
+    pub paused_step: Duration,
 }
 
 impl Default for FrameStep {
@@ -172,6 +179,8 @@ impl Default for FrameStep {
             delta: Duration::ZERO,
             at: Instant::now(),
             elapsed: Duration::ZERO,
+            paused_lag: Duration::ZERO,
+            paused_step: Duration::ZERO,
         }
     }
 }
@@ -193,20 +202,54 @@ impl FrameStep {
             delta: Duration::from_secs_f64(step.max(0.0)),
             at,
             elapsed,
+            paused_lag: Duration::ZERO,
+            paused_step: Duration::ZERO,
         }
     }
 
-    /// [`Self::elapsed`] in seconds, the base a `Time<Real>` stamp maps onto `GetTime` from.
-    pub fn elapsed_secs_f64(&self) -> f64 {
-        self.elapsed.as_secs_f64()
+    /// This step with the world clock's reading of it, after `prev`. The lag only grows, by at most
+    /// the step: a paced clock still behind the instant of a resume can't take the world backward.
+    fn with_world(self, prev: &FrameStep) -> Self {
+        self.with_lag(crate::world_clock::lag_at(self.at), prev)
     }
 
-    /// The paced clock before this frame's step, as (instant, seconds): where `GetTime` stands for
-    /// a system that runs ahead of the UI's tick, which then adds [`Self::delta`].
+    fn with_lag(mut self, lag: Duration, prev: &FrameStep) -> Self {
+        let lag = lag.clamp(prev.paused_lag, prev.paused_lag + self.delta);
+        self.paused_step = lag - prev.paused_lag;
+        self.paused_lag = lag;
+        self
+    }
+
+    /// The step the world took this frame: [`Self::delta`], or none while paused. The sky and
+    /// `GetTime` advance by it.
+    pub fn world_delta(&self) -> Duration {
+        self.delta.saturating_sub(self.paused_step)
+    }
+
+    /// The world clock at this step, the paced clock's [`Self::at`] on
+    /// [`crate::world_clock`], and the instant `GetTime` is anchored to.
+    pub fn world_at(&self) -> Instant {
+        self.at.checked_sub(self.paused_lag).unwrap_or(self.at)
+    }
+
+    /// The world's seconds at this step: [`Self::elapsed`] less the time paused.
+    pub fn world_elapsed(&self) -> Duration {
+        self.elapsed.saturating_sub(self.paused_lag)
+    }
+
+    /// [`Self::world_elapsed`] in seconds, the base a `Time<WorldClock>` stamp maps onto `GetTime`
+    /// from.
+    pub fn elapsed_secs_f64(&self) -> f64 {
+        self.world_elapsed().as_secs_f64()
+    }
+
+    /// The world clock before this frame's step, as (instant, seconds): where `GetTime` stands for
+    /// a system that runs ahead of the UI's tick, which then adds [`Self::world_delta`].
     pub fn before_step(&self) -> (Instant, f64) {
+        let (at, delta) = (self.world_at(), self.world_delta());
         (
-            self.at.checked_sub(self.delta).unwrap_or(self.at),
-            self.elapsed.saturating_sub(self.delta).as_secs_f64(),
+            at.checked_sub(delta).unwrap_or(at),
+            self.world_elapsed().saturating_sub(delta).as_secs_f64(),
         )
     }
 }
@@ -222,6 +265,7 @@ pub(crate) fn pace_frame_time(
     mut generic: ResMut<Time>,
     mut pacer: ResMut<FramePacer>,
     mut step: ResMut<FrameStep>,
+    mut world: ResMut<Time<WorldClock>>,
     strategy: Option<Res<TimeUpdateStrategy>>,
 ) {
     let raw = real.delta().as_secs_f64();
@@ -234,11 +278,15 @@ pub(crate) fn pace_frame_time(
     if pacer.off || manual {
         pacer.reset();
         pacer.total = None;
-        *step = FrameStep::new(last_update, real.elapsed(), raw, 0.0);
+        *step = FrameStep::new(last_update, real.elapsed(), raw, 0.0).with_world(&step);
+        let behind = step.world_elapsed().saturating_sub(world.elapsed());
+        world.advance_by(behind);
         return;
     }
     let paced = pacer.pace(raw);
-    *step = FrameStep::new(last_update, real.elapsed(), paced, pacer.carry);
+    *step = FrameStep::new(last_update, real.elapsed(), paced, pacer.carry).with_world(&step);
+    let behind = step.world_elapsed().saturating_sub(world.elapsed());
+    world.advance_by(behind);
     if virt.is_paused() || virt.relative_speed_f64() != 1.0 {
         pacer.total = None;
         return;
@@ -305,12 +353,57 @@ pub fn plugin(app: &mut App) {
     }
     app.init_resource::<FramePacer>()
         .init_resource::<FrameStep>()
+        .init_resource::<Time<WorldClock>>()
         .add_systems(First, pace_frame_time.after(TimeSystems));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 16 ms step `n` frames in, with the world clock `lag` behind it.
+    fn paused_frame(n: u64, lag: Duration, prev: &FrameStep) -> FrameStep {
+        let delta = Duration::from_millis(16);
+        FrameStep {
+            delta,
+            at: prev.at + delta,
+            elapsed: delta * n as u32,
+            ..default()
+        }
+        .with_lag(lag, prev)
+    }
+
+    #[test]
+    fn the_world_step_stops_for_a_pause_and_takes_up_where_it_left_off() {
+        let ms = Duration::from_millis;
+        let start = FrameStep::default();
+        let run = paused_frame(1, ms(0), &start);
+        assert_eq!(run.world_delta(), ms(16), "running: the whole frame");
+
+        // Held for a whole frame: nothing moves but the frame's own clock.
+        let held = paused_frame(2, ms(16), &run);
+        assert_eq!(held.delta, ms(16), "OnUpdate keeps its elapsed");
+        assert_eq!(held.world_delta(), ms(0));
+        assert_eq!(held.world_elapsed(), run.world_elapsed());
+        assert_eq!(held.world_at(), run.world_at());
+
+        // Resumed part-way through a frame, the rest of it counts.
+        let back = paused_frame(3, ms(26), &held);
+        assert_eq!(back.world_delta(), ms(6));
+        assert_eq!(back.world_at(), run.world_at() + ms(6));
+    }
+
+    #[test]
+    fn a_pace_behind_the_resume_cannot_take_the_world_backward() {
+        let ms = Duration::from_millis;
+        let start = FrameStep {
+            paused_lag: ms(100),
+            ..default()
+        };
+        let frame = paused_frame(1, ms(40), &start);
+        assert_eq!(frame.paused_lag, ms(100), "the lag only grows");
+        assert_eq!(frame.world_delta(), ms(16));
+    }
 
     fn pacer() -> FramePacer {
         FramePacer {
@@ -597,6 +690,7 @@ mod tests {
         world.init_resource::<Time>();
         world.insert_resource(pacer());
         world.init_resource::<FrameStep>();
+        world.init_resource::<Time<WorldClock>>();
         world
     }
 
