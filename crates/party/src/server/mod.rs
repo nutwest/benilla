@@ -12,6 +12,8 @@ use bevy::prelude::*;
 mod db;
 mod fetch;
 mod layout;
+mod order_bar;
+mod orders;
 mod party;
 mod procs;
 mod rts;
@@ -100,6 +102,8 @@ pub struct Supervisor {
     jump: AtomicBool,
     /// The party's members, guid and name, once it is in the world.
     party: Mutex<Vec<(u64, &'static str)>>,
+    /// Orders asked for, not yet given.
+    orders: Mutex<Vec<(u64, orders::Order)>>,
     /// The units the client streams, sampled by the app.
     units: Mutex<Vec<UnitSnap>>,
 }
@@ -125,6 +129,7 @@ impl Supervisor {
             walk: Mutex::default(),
             jump: AtomicBool::new(false),
             party: Mutex::default(),
+            orders: Mutex::default(),
             units: Mutex::default(),
         }
     }
@@ -240,7 +245,12 @@ impl Plugin for ServerPlugin {
             .add_systems(Startup, start)
             .add_systems(Update, (bridge, sample_units, report_in_world))
             .add_systems(First, walk)
-            .add_plugins((rts::RtsPlugin, selection::SelectionPlugin));
+            .add_plugins((
+                rts::RtsPlugin,
+                selection::SelectionPlugin,
+                orders::OrdersPlugin,
+                order_bar::OrderBarPlugin,
+            ));
     }
 }
 
@@ -311,6 +321,11 @@ impl Supervisor {
         self.self_guid.load(Ordering::Relaxed)
     }
 
+    /// Gives `guid` an order, from the next frame.
+    fn give_order(&self, guid: u64, order: orders::Order) {
+        self.orders.lock().unwrap().push((guid, order));
+    }
+
     /// Swaps to the member `name`, as the switch key does to the next one.
     fn swap_to(&self, name: &str) {
         *self.next_swap.lock().unwrap() = Some(name.to_string());
@@ -337,7 +352,10 @@ fn sample_units(
     }
     // The fall checks read a body's arc, a frame at a time.
     static EVERY_FRAME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let every_frame = *EVERY_FRAME.get_or_init(|| std::env::var_os("PARTY_FALL_TEST").is_some());
+    let every_frame = *EVERY_FRAME.get_or_init(|| {
+        std::env::var_os("PARTY_FALL_TEST").is_some()
+            || std::env::var_os("PARTY_ORDER_TEST").is_some()
+    });
     *next = now + if every_frame { 0.0 } else { 0.25 };
     let me = objects.player();
     const TYPEMASK_UNIT: u32 = 0x8;

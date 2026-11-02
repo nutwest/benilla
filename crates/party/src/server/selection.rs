@@ -21,7 +21,7 @@ const CLICK_PIXELS: f32 = 10.0;
 /// How long a press may be held and still be a click, in seconds, as `PressGesture`'s ceiling.
 const CLICK_SECS: f32 = 0.8;
 /// How near the cursor must be to a member's middle to pick it, in pixels.
-const PICK_PIXELS: f32 = 48.0;
+pub(super) const PICK_PIXELS: f32 = 48.0;
 /// A member's middle above its feet, in yards.
 const BODY_MIDDLE: f32 = 1.0;
 /// The second click of a double click, within this many seconds.
@@ -36,7 +36,7 @@ const BOX_FILL: Color = Color::srgba(0.25, 1.0, 0.35, 0.12);
 
 /// The selected members, by guid, and the press under way.
 #[derive(Resource, Default)]
-struct Selection {
+pub(super) struct Selection {
     members: Vec<u64>,
     press: Option<Press>,
     /// The last click on a member and when, for a double click.
@@ -50,6 +50,13 @@ struct Press {
     to: Vec2,
     at: f32,
     travel: f32,
+}
+
+impl Selection {
+    /// The selected members.
+    pub(super) fn members(&self) -> &[u64] {
+        &self.members
+    }
 }
 
 impl Press {
@@ -103,13 +110,39 @@ fn spawn_overlay(mut commands: Commands) {
 }
 
 /// The member nearest `at` on screen, within [`PICK_PIXELS`] of its middle.
-fn member_at(at: Vec2, members: &[(u64, &'static str, Vec2)]) -> Option<(u64, &'static str)> {
+pub(super) fn member_at(
+    at: Vec2,
+    members: &[(u64, &'static str, Vec2)],
+) -> Option<(u64, &'static str)> {
     members
         .iter()
         .map(|&(guid, name, on_screen)| (on_screen.distance(at), guid, name))
         .filter(|(away, ..)| *away <= PICK_PIXELS)
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, guid, name)| (guid, name))
+}
+
+/// The members where the camera shows them now.
+pub(super) fn party_on_screen(
+    server: &Server,
+    objects: &Objects,
+    view: &Camera,
+    view_global: &GlobalTransform,
+    bodies: &Query<&GlobalTransform, Without<WorldCamera>>,
+) -> Vec<(u64, &'static str, Vec2)> {
+    let party = server.0.party.lock().unwrap().clone();
+    party
+        .iter()
+        .filter_map(|&(guid, name)| {
+            let (_, entity, _) = objects.iter().find(|(g, ..)| *g == guid)?;
+            let middle = bodies.get(entity).ok()?.translation() + Vec3::Y * BODY_MIDDLE;
+            Some((
+                guid,
+                name,
+                view.world_to_viewport(view_global, middle).ok()?,
+            ))
+        })
+        .collect()
 }
 
 /// A click: on a member it replaces the selection, or with Shift toggles the member; on empty
@@ -180,7 +213,8 @@ fn select(
     let cursor = window.single().ok().and_then(Window::cursor_position);
     let now = time.elapsed_secs();
 
-    if buttons.just_pressed(MouseButton::Left) && !focus.hovering() {
+    if buttons.just_pressed(MouseButton::Left) && !focus.hovering() && !rts.placing && !rts.over_bar
+    {
         sel.press = cursor.map(|at| Press {
             from: at,
             to: at,
@@ -205,19 +239,7 @@ fn select(
     let Ok((view, view_global)) = cameras.single() else {
         return;
     };
-    let party = server.0.party.lock().unwrap().clone();
-    let on_screen: Vec<(u64, &'static str, Vec2)> = party
-        .iter()
-        .filter_map(|&(guid, name)| {
-            let (_, entity, _) = objects.iter().find(|(g, ..)| *g == guid)?;
-            let middle = bodies.get(entity).ok()?.translation() + Vec3::Y * BODY_MIDDLE;
-            Some((
-                guid,
-                name,
-                view.world_to_viewport(view_global, middle).ok()?,
-            ))
-        })
-        .collect();
+    let on_screen = party_on_screen(&server, &objects, view, view_global, &bodies);
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     if press.is_click(now) {
         let under = member_at(press.from, &on_screen);

@@ -257,6 +257,41 @@ pub(crate) struct SelectionRadius(pub(crate) f32);
 #[derive(Resource, Default)]
 pub struct PartySelection(pub Vec<u64>);
 
+/// Deviation: a consumer's ground circles, each a point and a radius in yards, as a selection ring
+/// is drawn, for a Guard post being placed.
+#[derive(Resource, Default)]
+pub struct PartyMarks(pub Vec<(Vec3, f32)>);
+
+/// Whether the played character can attack a unit, for a consumer choosing an order.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct Hostility<'w, 's> {
+    world: relations::RelationWorld<'w, 's>,
+    index: Res<'w, crate::net::GuidIndex>,
+    stores: Query<'w, 's, &'static crate::net::ObjectStore>,
+}
+
+impl Hostility<'_, '_> {
+    /// `guid`'s unit is one the played character may attack, and it lives.
+    pub fn hostile(&self, guid: u64) -> bool {
+        let Some(store) = self
+            .index
+            .0
+            .get(&guid)
+            .and_then(|&entity| self.stores.get(entity).ok())
+        else {
+            return false;
+        };
+        let Some(me) = self.world.me() else {
+            return false;
+        };
+        !store.0.unit_is_dead()
+            && self
+                .world
+                .get()
+                .can_attack(&me, &self.world.unit_of(guid, store))
+    }
+}
+
 /// The set the targeting chain's frame-time half runs in: readers of [`Selection`], [`Hovered`]
 /// or [`CombatFlash`] order after it, or they can read last frame's verdict.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -308,6 +343,7 @@ impl Plugin for TargetPlugin {
         release::register(app);
         app.init_resource::<Selection>()
             .init_resource::<PartySelection>()
+            .init_resource::<PartyMarks>()
             .init_resource::<ClickConfig>()
             .init_resource::<AssistAttack>()
             .init_resource::<Hovered>()

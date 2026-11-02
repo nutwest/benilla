@@ -122,6 +122,8 @@ pub(super) struct Status {
     pub(super) victim_hp: u32,
     pub(super) pending_moves: u32,
     pub(super) spline_ack: u32,
+    /// The server's order, by kind, -1 with none.
+    pub(super) order: i32,
     pub(super) raw: String,
     /// Where it stands, WoW coordinates.
     pub(super) pos: [f32; 3],
@@ -172,6 +174,7 @@ pub(super) fn status(
                 victim_hp: num("victim_hp").max(0.0) as u32,
                 pending_moves: num("pending_moves") as u32,
                 spline_ack: num("spline_ack") as u32,
+                order: num("order") as i32,
                 pos: kv.get("pos").map_or([0.0; 3], |p| {
                     let mut c = p.split(',').map(|v| v.parse().unwrap_or(0.0));
                     [

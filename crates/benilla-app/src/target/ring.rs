@@ -27,6 +27,8 @@ pub(super) struct RingState {
     shown: bool,
     /// The rings of a consumer's selected party members ([`super::PartySelection`]).
     party: Vec<PartyRing>,
+    /// The projections of a consumer's ground circles ([`super::PartyMarks`]).
+    marks: Vec<PartyRing>,
 }
 
 /// One selected member's ring, cached as the target's is.
@@ -274,9 +276,33 @@ pub(super) fn update_ring(
         // A consumer's selected members, and the guids that find them.
         Option<Res<super::PartySelection>>,
         Option<Res<crate::net::GuidIndex>>,
+        Option<Res<super::PartyMarks>>,
     ),
 ) {
     let state = &mut *state;
+    let marks = targets.5.as_deref().map_or(&[][..], |m| &m.0[..]);
+    state.marks.truncate(marks.len());
+    for (at, &(point, radius)) in marks.iter().enumerate() {
+        let key = RingKey {
+            feet: point,
+            radius,
+            fade_angle: 0.0,
+            surfaces: decals.receiver_count(),
+        };
+        if state.marks.len() <= at {
+            state.marks.push(PartyRing {
+                guid: 0,
+                key: RingKey::default(),
+                verts: Vec::new(),
+            });
+        }
+        let mark = &mut state.marks[at];
+        if mark.key != key {
+            mark.verts.clear();
+            mark.key = key;
+            project_ring(&mut mark.verts, &decals, point, radius, 0.0);
+        }
+    }
     // Before the target's: its arm leaves the angle current, and this needs it either way.
     let party = targets.3.as_deref().map_or(&[][..], |p| &p.0[..]);
     if !party.is_empty() {
@@ -465,7 +491,8 @@ pub(super) fn push_ring(
     };
     let Ok(cam) = cam.single() else { return };
     let party_tint = PARTY_RING_COLOR.to_linear();
-    for ring in state.party.iter().filter(|ring| !ring.verts.is_empty()) {
+    let rings = state.party.iter().chain(state.marks.iter());
+    for ring in rings.filter(|ring| !ring.verts.is_empty()) {
         let mut batch = draw
             .batch(cam, assets.texture.id())
             .additive()

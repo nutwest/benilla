@@ -8,6 +8,7 @@
 //! the movement; an attack on an enemy already in melee only turns to face it (mode 2).
 
 use std::f32::consts::{FRAC_PI_2, PI};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -174,6 +175,61 @@ pub(crate) fn cancel_move_action_on_ui_shutdown(
     follow.stop()
 }
 
+/// Deviation: 1.12 has no orders. What a consumer has the played character do, by the walk and the
+/// follow its input drives, so a movement key ends it as it ends those.
+#[derive(Message, Debug, Clone)]
+pub enum OwnOrder {
+    /// Walk to a point, in Bevy space.
+    WalkTo(Vec3),
+    /// Follow a unit, named for its status line.
+    Follow(u64, String),
+    Stop,
+}
+
+static OWN_ORDER_ACTIVE: AtomicBool = AtomicBool::new(false);
+static OWN_ORDER_SETTLED: AtomicBool = AtomicBool::new(true);
+
+/// Whether the played character is walking or following on a consumer's order.
+pub fn own_order_active() -> bool {
+    OWN_ORDER_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// Whether [`own_order_active`] answers for the last [`OwnOrder`], a frame after it was taken.
+pub fn own_order_settled() -> bool {
+    OWN_ORDER_SETTLED.load(Ordering::Relaxed)
+}
+
+/// Runs each [`OwnOrder`], ahead of the controller that walks it.
+pub(super) fn run_own_orders(
+    mut orders: MessageReader<OwnOrder>,
+    mut auto: AutoMove,
+    mut stand: MessageWriter<super::StandStateRequest>,
+) {
+    let mut took = false;
+    for order in orders.read() {
+        took = true;
+        match order {
+            OwnOrder::WalkTo(at) => {
+                auto.follow.stop();
+                auto.order_walk(*at, &mut stand);
+            }
+            OwnOrder::Follow(guid, name) => {
+                auto.approach.stop();
+                auto.follow.start(*guid, name.clone());
+            }
+            OwnOrder::Stop => {
+                auto.approach.stop();
+                auto.follow.stop();
+            }
+        }
+    }
+    OWN_ORDER_SETTLED.store(!took, Ordering::Relaxed);
+    OWN_ORDER_ACTIVE.store(
+        auto.approach.active() || auto.follow.guid.is_some(),
+        Ordering::Relaxed,
+    );
+}
+
 pub(crate) fn can_auto_interact(
     enabled: bool,
     me: Option<&ObjectStore>,
@@ -235,6 +291,17 @@ impl AutoMove<'_, '_> {
             return Err(Refused::Silent);
         }
         self.arm(Toward::Object { verb, guid }, at, stop, stand)
+    }
+
+    /// A consumer's walk to a point: the ground walk, on the `AutoInteract` option or off it.
+    fn order_walk(
+        &mut self,
+        at: Vec3,
+        stand: &mut MessageWriter<super::StandStateRequest>,
+    ) -> bool {
+        let anchor = self.anchor(at);
+        self.arm(Toward::Ground(anchor), at, GROUND_STOP, stand)
+            .is_ok()
     }
 
     /// `0x6102b0`, the right-click on the ground (`0x5e0378`).

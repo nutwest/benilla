@@ -30,6 +30,9 @@ const PAN_RATE: f32 = 0.9;
 /// Turn speed for Q and E in radians per second, and for a drag in radians per pixel.
 const TURN_RATE: f32 = 1.6;
 const DRAG_TURN: f32 = 0.004;
+/// How far a right press may travel and still be a click, in pixels, and how long it may be held.
+const RIGHT_CLICK_PIXELS: f32 = 10.0;
+const RIGHT_CLICK_SECS: f32 = 0.8;
 /// How fast the focus height eases to the ground, per second.
 const GROUND_EASE: f32 = 8.0;
 /// A toggle's camera blend, in seconds.
@@ -70,6 +73,22 @@ pub(super) struct Rts {
     /// The focus has taken a real terrain height, so later heights ease rather than snap.
     grounded: bool,
     dragging: bool,
+    /// A right press under way, when it began and how far the mouse has gone since, in pixels: it
+    /// turns the camera only past [`RIGHT_CLICK_PIXELS`], or it is an order.
+    right_press: Option<(f32, f32)>,
+    /// A right press ended as a click.
+    right_click: bool,
+    /// A Guard post is being placed: the wheel is its radius's, the left button its post's.
+    pub(super) placing: bool,
+    /// The cursor is over the order bar: a left press is the bar's.
+    pub(super) over_bar: bool,
+}
+
+impl Rts {
+    /// Whether a right press ended as a click since the last call.
+    pub(super) fn take_right_click(&mut self) -> bool {
+        std::mem::take(&mut self.right_click)
+    }
 }
 
 impl Rts {
@@ -94,6 +113,10 @@ impl Default for Rts {
             distance: DISTANCE_START,
             grounded: false,
             dragging: false,
+            right_press: None,
+            right_click: false,
+            placing: false,
+            over_bar: false,
         }
     }
 }
@@ -139,6 +162,7 @@ fn clamp_to_party(at: Vec3, center: Vec3) -> Vec3 {
 #[allow(clippy::too_many_arguments)]
 fn steer(
     rts: &mut Rts,
+    now: f32,
     dt: f32,
     focus: &UiFocus,
     keys: &ButtonInput<KeyCode>,
@@ -147,8 +171,22 @@ fn steer(
     wheel: &mut MessageReader<MouseWheel>,
     cursor: Option<&mut CursorOptions>,
 ) {
-    // A drag begun in the world holds through a frame it crosses; one can't begin over a frame.
-    let dragging = buttons.pressed(MouseButton::Right) && (rts.dragging || !focus.hovering());
+    // A press begun in the world holds through a frame it crosses; one can't begin over a frame.
+    if buttons.just_pressed(MouseButton::Right) && !focus.hovering() {
+        rts.right_press = Some((now, 0.0));
+    }
+    if let Some((_, travel)) = &mut rts.right_press {
+        *travel += motion.delta.length();
+    }
+    let dragging = buttons.pressed(MouseButton::Right)
+        && rts
+            .right_press
+            .is_some_and(|(_, travel)| travel >= RIGHT_CLICK_PIXELS);
+    if !buttons.pressed(MouseButton::Right) {
+        if let Some((at, travel)) = rts.right_press.take() {
+            rts.right_click = travel < RIGHT_CLICK_PIXELS && now - at < RIGHT_CLICK_SECS;
+        }
+    }
     if dragging != rts.dragging {
         rts.dragging = dragging;
         if let Some(cursor) = cursor {
@@ -164,7 +202,7 @@ fn steer(
         rts.yaw -= motion.delta.x * DRAG_TURN;
     }
     for ev in wheel.read() {
-        if !focus.hovering() {
+        if !focus.hovering() && !rts.placing {
             rts.distance = (rts.distance * (1.0 - ev.y * 0.1)).clamp(DISTANCE_MIN, DISTANCE_MAX);
         }
     }
@@ -281,6 +319,7 @@ fn camera(
         let cursor_options = cursor.as_deref_mut();
         steer(
             rts,
+            now,
             dt,
             &focus,
             &keys,

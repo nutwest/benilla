@@ -596,7 +596,7 @@ fresh AI reads what is there.
 |---|---|---|
 | Move | Right-click on ground | Paths to its slot, then becomes Hold |
 | Hold | A finished Move | Stays in place, and still fights within reach: melee adjacent, ranged and healers within their range |
-| Guard | A key in the RTS view, on the selected members | Engages what enters a radius around its post, then walks back |
+| Guard | G or the bar, then a post | Engages what enters a radius around its post, then walks back |
 | Attack | Right-click on an enemy | Attacks it. When it dies, Hold where it stands |
 | Follow | Right-click on a party member | Follows and assists that member |
 | None | The default | Today's behaviour: follow the leader |
@@ -616,17 +616,18 @@ fresh AI reads what is there.
   - the teleport to the leader past 100 yd, or a held bot blinks back;
   - `BeginChasing`, one function with 11 callers;
   - `RunAwayFromTarget`, one function with 5 callers.
-  32 other `GetMotionMaster` calls sit in the class routines. Most clear motion and go idle, but
-  each must be read when this is built.
-- **Reach, for Hold:** with `BeginChasing` gated, `SelectAttackTarget` must also drop what the bot
-  can't reach from where it stands, or it holds a target it can never hit. Melee reach is the melee
+  The other motion calls in the class routines only read the type, clear it, or go through those
+  two, so the gates cover them (read 2026-11-02).
+- **Reach, for Hold:** with `BeginChasing` gated, the bot drops a target out of reach, or it would
+  hold one it can never hit. Hold fights what is already fighting the party and starts nothing;
+  Guard also engages any hostile inside its radius. Melee reach is the melee
   range. Ranged and healers use the 25 yd `BeginChasing` already sets as their caster chase
   distance, and need line of sight.
 - **Guard,** from td-game's `Guard` stance (`units.rs`), radius 4 to 15 yd: the order carries a post
   and a radius. The bot idles at the post, attacks what comes inside the radius, may chase inside
   it, and paths back to the post when its target dies or leaves. Hold is the same order with no
-  radius but its own reach, so the two share their gates. In td-game `[` and `]` change the radius,
-  and the same keys suit here, with a marker ring drawn from M6c's decal path.
+  radius but its own reach, so the two share their gates.
+- **A new order moves the AI's clock up,** or it could sit out the 1 s interval, or a fresh AI's 2 s.
 - **Pathing:** mmaps are built and on for this install (`mmap.enabled = 1`, 1783 files). On a first
   run they build in the background for about 27 minutes, and until then `MovePoint` falls back to
   a straight line.
@@ -644,6 +645,8 @@ that by up to 1 s. It must stay party chat: a say would wait behind the map.
   can stop it, which is acceptable for "for now".
 - **Attack:** `Approach`'s melee walk plus the existing attack.
 - **Follow:** `FollowState`, also a beeline.
+- **Guard:** the played character has no AI, so it stands, as on a Hold.
+- **The way in** is `OwnOrder`, a message the app runs ahead of `control`.
 - **While paused** `control` doesn't run, so the crate holds the order and arms it at the resume.
 - **Rejected: a server spline** on the played character. It would path, but a ride locks the player's
   input until it ends.
@@ -672,6 +675,22 @@ that by up to 1 s. It must stay party chat: a say would wait behind the map.
   and enemies pick in screen space as M5 does, then the ray takes the ground. Enemy or friend comes
   from `Relations::can_attack`. A public verb has to expose both, as the crate can't reach them.
 
+**The order bar** (`crates/party/src/server/order_bar.rs`).
+- **Where:** bottom centre, 96 px up, clear of the action bar at the stock scale, while the RTS view
+  is on and members are selected. It is the crate's own Bevy nodes, hit-tested by their rects, so
+  the stock interface is untouched and takes the mouse first.
+- **Buttons:** Hold (`Ability_Warrior_DefensiveStance`), Guard (`Ability_Defend`) and Follow me
+  (`Ability_Tracking`), stock icons off the player's client, each with a tooltip naming the order
+  and its key.
+- **State:** a gold edge when all selected have that order, a dim gold edge and a dimmer icon when
+  some do, grey when none. A Move reads as a Hold, as it ends in one.
+- **Keys:** H, G and F, which the RTS view takes from their stock bindings, along with `[` and `]`.
+- **Guard placing:** G or the button. A circle, drawn as the selection ring is, follows the cursor.
+  The wheel or `[` and `]` set the radius (4 to 15 yd, opening at 8), a left click places the post,
+  and Esc or a right click cancels. While placing, Esc opens no menu (`yield_escape`).
+- **Right click:** a member is followed, an enemy attacked, and anything else walked to, by a ray
+  against the world's collision. Past 10 px of mouse travel a right press turns the camera instead.
+
 **Client: what you see.**
 - **Rings:** `target/ring.rs` draws one ring, `UnitSelectTexture.blp` projected by `WorldDecal`. M6
   makes it a list of rings for a consumer's guids. `WorldDecal` walks the receiving colliders
@@ -692,11 +711,16 @@ mesh to the nearest point.
 
 **Queues** come last, in M6c: Shift + right-click appends to a member's list instead of replacing it.
 
-**The riskiest unknown** is the handover of an order in flight across a swap. Each piece exists, but
-the two ends are different movers: a client beeline and a server path. A character mid-walk has to
-change from one to the other without a stop, a snap or a lost order, in both directions, and
-paused or running. Reading can't settle how that looks. So M6b starts with that case, on one
-member, ahead of the formation and combat work.
+**The riskiest unknown, the handover of an order in flight across a swap, is settled** (2026-11-02,
+one valid run, `PARTY_ORDER_TEST=1`, `crates/party/src/server/party/order_test.rs`,
+`logs/order-checks.txt`, 19 findings, 0 failed). In all four cases, bot to played and played to bot,
+running and paused, the walker reached its point and ended on Hold: biggest step 0.24 yd, longest
+stop 132 ms. A paused swap can shift the body up to 0.64 yd, once, as the server's position is up to
+a map tick behind the client's frozen view. A bot on Hold stayed put as the leader walked off.
+
+**A Move needs a height on the ground.** The server paths to a point on the mesh, and goes in a straight
+line through the hill to one that isn't, which left a body underground to fall through the world
+at a swap. A right click's ray gives a good height, and `Order::Move` takes the ground's for a NaN.
 
 The second risk is Hold inside combat: a melee bot that won't chase, or a healer with no line of
 sight, may stand idle, and the class routines' other motion calls may still move it.
@@ -1306,7 +1330,9 @@ selection waits while it is off. Covered by the touched modules' tests alone unt
 - A swap keeps the selection. A right drag still turns the camera.
 - A UI frame under the cursor takes the click, and starts no box.
 
-**M6b — Orders.**
+**M6b — Orders.** Built 2026-11-02, fork and benilla. The handover is checked live (§2.3). The rest is
+covered by the touched modules' tests alone until the playtest. Every member of a Move goes to the
+same point until M6c's slots.
 1. **The handover first** (the riskiest unknown): the table, `.party order`, and Move on one member,
    swapped mid-walk in both directions, paused and running.
 2. The bot's Hold gates, then Attack, Follow and Guard.

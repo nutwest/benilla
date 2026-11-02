@@ -109,6 +109,7 @@ pub(crate) use approach::{
     can_auto_interact, cancel_move_action_on_ui_shutdown, Approach, ApproachVerb, AutoMove,
     Refused, Subject, RANGE_STOP_FRACTION, TALK_STOP,
 };
+pub use approach::{own_order_active, own_order_settled, OwnOrder};
 /// `SetStandState` run inside a script call.
 pub(crate) use posture::{stand_up_for_attack, stand_up_refused, StandSetter};
 pub(crate) use press::CommandSteps;
@@ -124,8 +125,8 @@ use state::{
     TURN_RATE_MOVING, WALK_RATIO, WATER_WALK_PITCH_FLOOR, WEDGE_MIN_FALL, WEDGE_STALL_RATIO,
     WEDGE_STILL_FRAMES,
 };
-pub(crate) use swap_blend::camera_yielded;
-pub use swap_blend::{yield_camera, CameraPlaced};
+pub(crate) use swap_blend::{camera_yielded, escape_yielded};
+pub use swap_blend::{yield_camera, yield_escape, CameraPlaced};
 /// The swim boundary `0.75·h`, also the wade ceiling, for the creature swim marker and the
 /// footstep splash, which have no `Player`.
 pub(crate) use swim::{may_swim, swim_enter_depth};
@@ -297,6 +298,15 @@ pub(crate) struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
+        // A consumer's orders run only for one that offers them.
+        if crate::net::party_offered() {
+            app.add_systems(
+                Update,
+                approach::run_own_orders
+                    .before(control)
+                    .in_set(crate::client_state::InWorldGated),
+            );
+        }
         net::register(app);
         follow::plugin(app);
         approach::plugin(app);
@@ -380,6 +390,8 @@ impl Plugin for PlayerPlugin {
                 .run_if(not(resource_exists::<crate::run_mode::CaptureMode>))
                 .in_set(crate::client_state::InWorldGated),
         )
+        // A consumer's orders for the played character, ahead of what walks them.
+        .add_message::<OwnOrder>()
         // A party swap's camera glide, over what `control` placed (`swap_blend`).
         .init_resource::<SwapBlend>()
         .add_systems(

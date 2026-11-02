@@ -725,7 +725,12 @@ fn dev_plane(mods: Mods) -> bool {
 /// and `ButtonInput::release_all` reach the stuck-latch sweep.
 /// The keys a consumer holding the camera pans and turns it with
 /// ([`crate::player::yield_camera`]).
-const CAMERA_KEYS: [KeyCode; 10] = [
+const CAMERA_KEYS: [KeyCode; 15] = [
+    KeyCode::KeyH,
+    KeyCode::KeyG,
+    KeyCode::KeyF,
+    KeyCode::BracketLeft,
+    KeyCode::BracketRight,
     KeyCode::KeyW,
     KeyCode::KeyA,
     KeyCode::KeyS,
@@ -758,7 +763,10 @@ fn key_leg(
     match ev.state {
         ButtonState::Pressed => {
             // A consumer holding the camera reads these itself.
-            if crate::player::camera_yielded() && CAMERA_KEYS.contains(&ev.key_code) {
+            if crate::player::camera_yielded()
+                && (CAMERA_KEYS.contains(&ev.key_code)
+                    || (ev.key_code == KeyCode::Escape && crate::player::escape_yielded()))
+            {
                 return;
             }
             // A focused box in alt-arrow mode declines the four arrows, so their bindings fire

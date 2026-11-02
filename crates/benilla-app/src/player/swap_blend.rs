@@ -25,6 +25,18 @@ pub fn yield_camera(yielded: bool) {
     YIELDED.store(yielded, Ordering::Relaxed);
 }
 
+static ESCAPE: AtomicBool = AtomicBool::new(false);
+
+/// Deviation: while set, Esc is the consumer's too, and opens no menu: it cancels what it's doing.
+pub fn yield_escape(yielded: bool) {
+    ESCAPE.store(yielded, Ordering::Relaxed);
+}
+
+/// Whether a consumer holds Esc.
+pub(crate) fn escape_yielded() -> bool {
+    ESCAPE.load(Ordering::Relaxed)
+}
+
 /// Whether a consumer holds the camera.
 pub(crate) fn camera_yielded() -> bool {
     YIELDED.load(Ordering::Relaxed)
