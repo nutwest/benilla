@@ -725,29 +725,36 @@ at a swap. A right click's ray gives a good height, and `Order::Move` takes the 
 The second risk is Hold inside combat: a melee bot that won't chase, or a healer with no line of
 sight, may stand idle, and the class routines' other motion calls may still move it.
 
-### Engine changes this needs (to be approved before each is made)
+### Engine changes
 
-The crate reaches benilla-app through `run_with`, `Objects` and `Interact` only, and every other
-item in benilla-app is `pub(crate)`. Each item below is a proposal. None is made without your
-go-ahead. Upstream policy keeps non-1.12 features out of benilla itself, so on this branch they
-are fork changes.
+Every change on this branch to benilla's own crates (`benilla-app`, `benilla-world`,
+`benilla-protocol`, `benilla-ui`), by file and reason, checked against `git diff main...party` on
+2026-11-02. They stay minimal, and new code goes in `crates/party` where it can. Upstream policy
+keeps non-1.12 features out of benilla itself, so on this branch they are fork changes, each marked
+`Deviation:` in the code. Paths are under `crates/benilla-app/src/` unless named.
 
-| # | Change | For |
-|---|---|---|
-| E0 | **Done (M0).** `benilla_app::AutoLogin { user, pass, character }`: a silent login and the character to enter, sent when the crate chooses (`glue_session/login.rs`, `roster.rs`) | M0 |
-| E1 | **The identity swap.** `SMSG_PARTY_SWAP {old, new}` in benilla-protocol, and its handling in benilla-app: move `SelfGuid`, `SelfPlayer`, `Embodied`/`ActiveMover` and `MoverClaim` to the new guid; reset the per-character caches without touching the world; reload the UI in place under the new character | M1 |
-| E1b | **Done (relog M1, kept).** `benilla_app::SessionRequest::{Command, Target, Relog, CreateCharacter}` (`glue_session/requests.rs`): server commands for the bots, and character creation for party setup | M1 |
-| E2 | A pausable world clock (§2.2): `SMSG_PARTY_PAUSE`, `benilla_world::world_clock`, a `FrameStep` split into real and world steps, `GetTime` and `UiClock` on the world step, `Time<Virtual>::pause()`, the "not driving" gate, and one refusal point for commands | M4 |
-| E3 | A camera yield (§2.2): built as `yield_camera` and `CameraPlaced`. `control` keeps placing the third-person pose, and a consumer overwrites it after | M5 |
-| E4 | Public read access to the party roster and member guids (`ui_party`) and to `SelfGuid` | M2, M6 |
-| E5 | A hook for chat replies: let the crate see system-message lines so it can read server command replies. M4 doesn't need it: pause replies with an opcode. | M2 |
+| # | Change | Files and why | For |
+|---|---|---|---|
+| E0 | A silent login | `glue_session/login.rs`, `glue_session/roster.rs`: `AutoLogin { user, pass, character }`, a login and the character to enter, sent when the crate chooses | M0 |
+| E1b | Asks of the session | `glue_session/requests.rs`, `glue_session/mod.rs`: `SessionRequest::{Command, PartyCommand, Target, Relog, CreateCharacter}`, server commands in say or party chat, and character creation for setup | M1 |
+| E1 | The swap in place | **Protocol:** `messages/opcode.rs`, `packet.rs`, `parse.rs`, `events.rs`, `events/decode.rs` parse `SMSG_PARTY_SWAP` (0x400). **Handling:** `net/party_swap.rs` and `net.rs` move the identity, the mover claim and the roster row. **Arrival:** `net/objects/arrival.rs` and `net/objects/update.rs` run it on the in-place self create (`PartyArrivalOwed`). **Event order:** `lanes.rs` holds the arrival a frame (`LaneHold`). **UI:** `ui_world_enter.rs` rebinds by events (`PartyRebindOwed`, `PartyRow`, `party_rebind`), `ui_action/net.rs` empties the bar as a game entry would, and `local_state.rs` shares one UI configuration (`share_character_state`). **Camera:** `player/swap_blend.rs` and `player.rs` glide it. **Instrument:** `ui_script/lifecycle.rs` logs the `ReloadUI` time. **Guards:** `game_plugins.rs` argues `party_rebind` and raises the schedule ceiling by the glide's pairs, and `lanes/guard_tests.rs` lists the world clock | M1c, M3 |
+| E1c | A swap in mid-air | **Protocol:** `messages/opcode.rs` and `world/writer/self_movement.rs` send `CMSG_PARTY_LANDED` (0x402). **The fall:** `net/motion/remote.rs` (`PartyFall`, `land_party_fall`) and `net/motion.rs` fly and land it. **Seeding:** `player/state.rs` (`air_seed`) and `net/party_swap.rs` (`fall_motion`, `mid_air`). **Landing:** `player/mover.rs` adds `land_contact`. **Keeping the pose:** `net/objects.rs` stops the re-create and queued moves moving the falling body. **Plumbing:** `player/controller.rs` publishes `mid_air`, and `net/io.rs` and `net/pause_gate.rs` send the landing. **Tests:** literals gain `party_fall` in `net/motion/spline.rs`, `net/motion/tests.rs`, `player/embody.rs`, `spell/range_units.rs`, `creature_anim/select/tests.rs` | Mid-air fix |
+| E2 | The world clock | **The clock:** `benilla-world/src/world_clock.rs`, `lib.rs`, and `frame_pace.rs` (the world step on `FrameStep`, `Time<WorldClock>`). **Interface:** `benilla-ui/src/script/tick.rs` (`tick_held`), `ui_script/extract/mod.rs`, `ui_script/mod.rs` and `ui_script/lifecycle.rs` put `GetTime` and `UiClock` on the world step. **Game clock:** `net/game_time.rs`. **Swept to `world_clock::now` or `Time<WorldClock>`:** `spell/inflight.rs`, `spell/net.rs`, `spell/cast_send.rs`, `spell/cooldowns.rs`, `spell/cooldowns/live.rs`, `spell/range_units.rs`, `spell/targeting/cursor.rs`, `items.rs`, `ui_action/state.rs`, `ui_items/feed.rs`, `ui_pet/net.rs`, `ui_pet/live.rs`, `ui_pet/drain.rs`, `ui_tradeskill.rs`, `ui_aura.rs`, `transport.rs`, `death/mod.rs`, `death/net.rs`, `target/died.rs`, `target/click.rs`, `target/by_name.rs`, `ui_summon.rs`, `poi_marker.rs`, `ui_dialog_verbs.rs`, `ui_dialog_verbs/live.rs`, `ui_battlefield.rs`, `ui_battlefield/live.rs`, `ui_battlefield_score.rs`, `ui_battlefield_positions.rs`, `ui_instance.rs`, `camera_shake.rs`, `net/motion/spline.rs`, `net/motion/remote.rs`, `net/objects.rs`, `player/server_ride.rs`, `benilla-world/src/weather/mod.rs`. **Fades on real time:** `benilla-world/src/model_fade.rs`, `entities.rs`, `entities/attach/mod.rs`, `entities/attach/redress.rs`, `entities/equipment/spawn.rs`, `aura_visual.rs`, `entities/mount/tests.rs`. **Guards:** `tests/world_clock_guard.rs` (new) and `tests/world_api_wall.rs` (the new items) | M4 |
+| E2b | The pause | **Protocol:** `messages/opcode.rs`, `packet.rs`, `parse.rs`, `events.rs`, `events/decode.rs` parse `SMSG_PARTY_PAUSE` (0x401). **Handling:** `net/party_pause.rs` freezes on it, offers the binding rows and thaws out of the world. **Command gate:** `net/pause_gate.rs` holds back what would run at the resume, and `net/io.rs` applies it. **Controller:** `player/controller.rs` sits paused in the not-driving branch on the frame's real step. **Casts:** `spell/cast_send.rs` refuses an attempt. **Binding:** `bindings.rs` notes the press, and `ui_script/manifest.rs` registers the rows and their default keys. `lib.rs` exports `enable_world_pause`, `world_paused` | M4 |
+| E3 | The camera yield | **The yield:** `player/swap_blend.rs` adds `yield_camera` and `CameraPlaced` (and `yield_escape`, E7). **Controller:** `player/controller.rs`: the mouse turns no body, the third-person view waits, and left starts no look session. **Bindings:** `bindings.rs` makes the camera keys, the right button and the wheel run no binding. **Input:** `ui_script/mod.rs` adds `UiFocus`. **Exports:** `player.rs`, and `lib.rs` re-exports `WorldCamera`, `TerrainHeights`. **Toggle:** `net/party_pause.rs` adds the `PARTYCAMERA` row and `take_camera_toggle` | M5 |
+| E6 | Selection | `target/mod.rs` (`PartySelection`) and `target/ring.rs` draw a ring under each selected member. `ui_script/party_frames.rs` (new) and `ui_script/mod.rs` (`PartyFrameRects`) read the unit frames' rects for the crate's outlines | M6a |
+| E7 | Orders | **Played character:** `player/approach.rs` (`OwnOrder`, `run_own_orders`, the walk without the `AutoInteract` option), registered by `player.rs` when offered. **Targets:** `target/mod.rs` (`Hostility`, `PartyMarks`). **Circles:** `target/ring.rs` draws the marks. **Esc:** `player/swap_blend.rs` (`yield_escape`). **Keys:** `bindings.rs` adds H, G, F, `[`, `]` and Esc to the yielded keys. **Exports:** `lib.rs` re-exports `WorldCollision`, `bevy_to_wow`, `wow_to_bevy` | M6b |
+| I1 | Instruments | `perf/lua_spikes.rs` (new) and `perf/mod.rs`: `WOW_LUA_SPIKES`, the chunks a slow frame's Lua ran. `capture/probes/act.rs` and `capture/probe_env.rs`: `WOW_PROBE_LUA_EACH_VM`, a Lua probe in every new VM | M1c, M3 |
+| E4 | Not built: public read access to the party roster and member guids (`ui_party`) and to `SelfGuid` | — | M2, M6 |
+| E5 | Not built: a hook for chat replies, so the crate can read server command replies. M4 didn't need it: pause replies with an opcode | — | M2 |
 
 Server-side work goes in a vmangos fork kept beside this repo:
 
 - The session swap (§2.1): a `.party swap <name>` command queued to the world thread, and
   `SMSG_PARTY_SWAP`.
 - Pause (§2.2): the frozen clock, `.party pause on|off` and `SMSG_PARTY_PAUSE`.
-- Bot orders.
+- A swap in mid-air: `CMSG_PARTY_LANDED` and the hold on the old character.
+- Bot orders (§2.3): the order table and `.party order`.
 
 ---
 
